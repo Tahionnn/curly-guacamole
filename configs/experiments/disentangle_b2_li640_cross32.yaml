@@ -1,0 +1,9 @@
+# Same-resolution encoder comparison against disentangle_fuse_cross32 (B2).
+extends: disentangle_fuse_cross32.yaml
+run_name: disentangle_b2_li640_cross32
+model:
+  encoder: pvt_v2_b2_li
+  jpeg_specialize_width: false
+  jpeg_pointwise_matmul: false
+dataset:
+  rgb_uint8_transport: false
