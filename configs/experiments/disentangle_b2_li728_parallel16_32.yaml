@@ -1,0 +1,8 @@
+# Parallel 16->32 and 32->16 read the same post-DG features.
+# Full HD native JPEG: 92.694 GFLOPs vs B2 640 92.961.
+extends: disentangle_b2_li736_cross32.yaml
+run_name: disentangle_b2_li728_parallel16_32
+model:
+  disentangle_parallel_16_32: true
+dataset:
+  image_size: 728

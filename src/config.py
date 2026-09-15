@@ -71,6 +71,7 @@ class ModelConfig(ConfigSection):
     disentangle_cross_strides: tuple[int, ...] = ()
     disentangle_attention_width: int = 128
     disentangle_attention_heads: int = 4
+    disentangle_parallel_16_32: bool = False
     disentangle_return_to_stride4: bool = False
     bifpn_width: int = 64
     bifpn_repeats: int = 0
@@ -93,6 +94,13 @@ class ModelConfig(ConfigSection):
         if self.jpeg_pretrained is not None:
             _non_empty_str(self.jpeg_pretrained, 'model.jpeg_pretrained')
         object.__setattr__(self, 'disentangle_levels', tuple(self.disentangle_levels))
+        if type(self.disentangle_parallel_16_32) is not bool:
+            raise ValueError('disentangle_parallel_16_32 must be a boolean')
+        if self.disentangle_parallel_16_32 and (
+                self.disentangle_mode != 'fuse' or
+                tuple(self.disentangle_cross_strides) != (32,) or
+                not {16, 32}.issubset(self.disentangle_levels)):
+            raise ValueError('parallel_16_32 requires fuse, levels 16/32 and cross_strides [32]')
         if type(self.disentangle_return_to_stride4) is not bool:
             raise ValueError('model.disentangle_return_to_stride4 must be a boolean')
         if self.disentangle_return_to_stride4 and (

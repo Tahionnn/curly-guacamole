@@ -132,7 +132,7 @@ class ForensicDisentangle(nn.Module):
 
     def __init__(self, encoder_strides, encoder_channels, levels, *, reduction=16,
                  mode='fuse', cross_strides=(), attention_width=128, attention_heads=4,
-                 norm='batch', return_to_stride4=False):
+                 norm='batch', return_to_stride4=False, parallel_16_32=False):
         super().__init__()
         if mode not in MODES:
             raise ValueError(f'disentangle mode must be one of {MODES}')
@@ -156,6 +156,9 @@ class ForensicDisentangle(nn.Module):
         if return_to_stride4 and (mode != 'fuse' or not {4, 32}.issubset(levels)):
             raise ValueError('return_to_stride4 requires fuse mode and levels 4 and 32')
 
+        if parallel_16_32 and (mode != 'fuse' or cross_strides != (32,)
+                               or not {16, 32}.issubset(levels)):
+            raise ValueError('parallel_16_32 requires fuse, levels 16/32 and cross_strides [32]')
         self.encoder_strides = list(encoder_strides)
         self.levels = tuple(sorted(levels))
         self.cross_strides = tuple(sorted(cross_strides))
@@ -180,9 +183,17 @@ class ForensicDisentangle(nn.Module):
             attention_width, attention_heads, pool_context=False,
         ) if return_to_stride4 else None
 
+        self.parallel_return16 = CrossScaleFuse(
+            encoder_channels[self.encoder_strides.index(16)],
+            encoder_channels[self.encoder_strides.index(32)],
+            attention_width, attention_heads, pool_context=False,
+        ) if parallel_16_32 else None
+
     def gate_stats(self) -> dict[str, float]:
         gates = [block.channel_gate for block in self.blocks.values() if block.inject]
         gates += [block.channel_gate for block in self.cross.values()]
+        if self.parallel_return16 is not None:
+            gates.append(self.parallel_return16.channel_gate)
         if self.return_to_stride4 is not None:
             gates.append(self.return_to_stride4.channel_gate)
         return {'max_abs': max((float(gate.detach().abs().max()) for gate in gates), default=0.0)}
@@ -197,9 +208,15 @@ class ForensicDisentangle(nn.Module):
                 features[index], supervise=supervise)
             if supervise:
                 patch_logits[stride], edge_logits[stride] = patch, edge
-            if str(stride) in self.cross:
+            if str(stride) in self.cross and self.parallel_return16 is None:
                 fine = features[self.encoder_strides.index(stride // 2)]
                 features[index] = self.cross[str(stride)](features[index], fine)
+        if self.parallel_return16 is not None:
+            i16, i32 = (self.encoder_strides.index(s) for s in (16, 32))
+            # Both directions read the same post-DG, pre-attention snapshot.
+            f16, f32 = features[i16], features[i32]
+            features[i32] = self.cross['32'](f32, f16)
+            features[i16] = self.parallel_return16(f16, f32)
         # Read the final coarse state, after all ascending cross-scale updates.
         if self.return_to_stride4 is not None:
             fine_index = self.encoder_strides.index(4)

@@ -76,6 +76,7 @@ def build_model(config: ModelConfig, *, aux_weight: float = .4, pretrained: bool
                       disentangle_attention_width=config.disentangle_attention_width,
                       disentangle_attention_heads=config.disentangle_attention_heads,
                       disentangle_return_to_stride4=config.disentangle_return_to_stride4,
+                      disentangle_parallel_16_32=config.disentangle_parallel_16_32,
                       bifpn_width=config.bifpn_width, bifpn_repeats=config.bifpn_repeats)
     model.forensic_fusion.branch.artifact.dc_layer0_dil[0].specialize_width = config.jpeg_specialize_width
     model.forensic_fusion.branch.artifact.dc_layer1_tail[0].use_matmul = config.jpeg_pointwise_matmul

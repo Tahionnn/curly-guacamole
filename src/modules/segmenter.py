@@ -17,6 +17,7 @@ class Segmenter(nn.Module):
                  disentangle_levels=(), disentangle_mode='fuse', disentangle_reduction=16,
                  disentangle_cross_strides=(), disentangle_attention_width=128,
                  disentangle_attention_heads=4, disentangle_return_to_stride4=False,
+                 disentangle_parallel_16_32=False,
                  bifpn_width=64, bifpn_repeats=0):
         super().__init__()
         # Construction order is part of reproducible baseline initialization.
@@ -39,6 +40,7 @@ class Segmenter(nn.Module):
             attention_width=disentangle_attention_width,
             attention_heads=disentangle_attention_heads,
             return_to_stride4=disentangle_return_to_stride4,
+            parallel_16_32=disentangle_parallel_16_32,
         ) if disentangle_levels else None
         self.bifpn = None
         if bifpn_repeats:
