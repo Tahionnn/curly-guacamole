@@ -71,6 +71,7 @@ class ModelConfig(ConfigSection):
     disentangle_cross_strides: tuple[int, ...] = ()
     disentangle_attention_width: int = 128
     disentangle_attention_heads: int = 4
+    disentangle_return_to_stride4: bool = False
 
     def __post_init__(self):
         _non_empty_str(self.encoder, 'model.encoder')
@@ -86,6 +87,11 @@ class ModelConfig(ConfigSection):
         if self.jpeg_pretrained is not None:
             _non_empty_str(self.jpeg_pretrained, 'model.jpeg_pretrained')
         object.__setattr__(self, 'disentangle_levels', tuple(self.disentangle_levels))
+        if type(self.disentangle_return_to_stride4) is not bool:
+            raise ValueError('model.disentangle_return_to_stride4 must be a boolean')
+        if self.disentangle_return_to_stride4 and (
+                self.disentangle_mode != 'fuse' or not {4, 32}.issubset(self.disentangle_levels)):
+            raise ValueError('disentangle_return_to_stride4 requires fuse mode and levels 4 and 32')
         object.__setattr__(self, 'disentangle_cross_strides', tuple(self.disentangle_cross_strides))
         strides = self.disentangle_levels + self.disentangle_cross_strides
         if any(type(stride) is not int or stride < 1 for stride in strides):

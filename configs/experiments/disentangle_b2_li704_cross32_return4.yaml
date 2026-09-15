@@ -1,0 +1,18 @@
+# Sequential 16 -> 32 -> 4; no 8 -> 16 cross-attention.
+# Native Full HD: 704 -> 95.791 GFLOPs, next supported size 712 -> 100.056.
+extends: disentangle_fuse_cross32.yaml
+run_name: disentangle_b2_li704_cross32_return4
+model:
+  encoder: pvt_v2_b2_li
+  jpeg_specialize_width: false
+  jpeg_pointwise_matmul: false
+  disentangle_cross_strides: [32]
+  disentangle_return_to_stride4: true
+dataset:
+  image_size: 704
+  rgb_uint8_transport: false
+train:
+  epochs: 6
+  full_pass_epochs: 0
+augmentation:
+  final_full_frame_epochs: 2

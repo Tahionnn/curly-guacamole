@@ -100,8 +100,10 @@ class CrossScaleFuse(nn.Module):
     come from the finer stage, downsampled onto the query grid.
     """
 
-    def __init__(self, coarse_channels: int, fine_channels: int, width: int, heads: int):
+    def __init__(self, coarse_channels: int, fine_channels: int, width: int, heads: int,
+                 *, pool_context: bool = True):
         super().__init__()
+        self.pool_context = pool_context
         if width % heads:
             raise ValueError('attention width must be divisible by the head count')
         self.query = nn.Conv2d(coarse_channels, width, 1)
@@ -116,7 +118,8 @@ class CrossScaleFuse(nn.Module):
 
     def forward(self, coarse, fine):
         batch, _, height, width = coarse.shape
-        context = self.align(F.adaptive_avg_pool2d(fine, (height, width)))
+        context = self.align(F.adaptive_avg_pool2d(fine, (height, width))
+                             if self.pool_context else fine)
         query = self.query_norm(self.query(coarse).flatten(2).transpose(1, 2))
         keys = self.context_norm(context.flatten(2).transpose(1, 2))
         attended, _ = self.attention(query, keys, keys, need_weights=False)
@@ -129,7 +132,7 @@ class ForensicDisentangle(nn.Module):
 
     def __init__(self, encoder_strides, encoder_channels, levels, *, reduction=16,
                  mode='fuse', cross_strides=(), attention_width=128, attention_heads=4,
-                 norm='batch'):
+                 norm='batch', return_to_stride4=False):
         super().__init__()
         if mode not in MODES:
             raise ValueError(f'disentangle mode must be one of {MODES}')
@@ -150,6 +153,8 @@ class ForensicDisentangle(nn.Module):
                 raise ValueError(f'cross stride {stride} must also be a disentangle level')
             if stride // 2 not in encoder_strides:
                 raise ValueError(f'cross stride {stride} requires encoder stride {stride // 2}')
+        if return_to_stride4 and (mode != 'fuse' or not {4, 32}.issubset(levels)):
+            raise ValueError('return_to_stride4 requires fuse mode and levels 4 and 32')
 
         self.encoder_strides = list(encoder_strides)
         self.levels = tuple(sorted(levels))
@@ -169,10 +174,17 @@ class ForensicDisentangle(nn.Module):
                 attention_width, attention_heads)
             for stride in self.cross_strides
         })
+        self.return_to_stride4 = CrossScaleFuse(
+            encoder_channels[self.encoder_strides.index(4)],
+            encoder_channels[self.encoder_strides.index(32)],
+            attention_width, attention_heads, pool_context=False,
+        ) if return_to_stride4 else None
 
     def gate_stats(self) -> dict[str, float]:
         gates = [block.channel_gate for block in self.blocks.values() if block.inject]
         gates += [block.channel_gate for block in self.cross.values()]
+        if self.return_to_stride4 is not None:
+            gates.append(self.return_to_stride4.channel_gate)
         return {'max_abs': max((float(gate.detach().abs().max()) for gate in gates), default=0.0)}
 
     def forward(self, features, *, supervise: bool):
@@ -188,4 +200,10 @@ class ForensicDisentangle(nn.Module):
             if str(stride) in self.cross:
                 fine = features[self.encoder_strides.index(stride // 2)]
                 features[index] = self.cross[str(stride)](features[index], fine)
+        # Read the final coarse state, after all ascending cross-scale updates.
+        if self.return_to_stride4 is not None:
+            fine_index = self.encoder_strides.index(4)
+            coarse_index = self.encoder_strides.index(32)
+            features[fine_index] = self.return_to_stride4(
+                features[fine_index], features[coarse_index])
         return features, patch_logits, edge_logits

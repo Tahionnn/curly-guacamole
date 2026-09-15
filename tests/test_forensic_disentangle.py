@@ -12,6 +12,45 @@ CHANNELS = [64, 128, 320, 512]
 ARMS = ['disentangle_supervision', 'disentangle_fuse', 'disentangle_fuse_cross32']
 
 
+def test_return_attention_reads_updated_coarse_features_and_preserves_detail():
+    block = module(cross_strides=[32], return_to_stride4=True).eval()
+    features = [torch.randn(2, c, 128 // s, 96 // s) for s, c in zip(STRIDES, CHANNELS)]
+    captured = {}
+    def capture_coarse(_module, _args, output):
+        captured['coarse'] = output
+    def capture_return(_module, args):
+        captured['context'] = args[1]
+    h1 = block.cross['32'].register_forward_hook(capture_coarse)
+    h2 = block.return_to_stride4.register_forward_pre_hook(capture_return)
+    try:
+        updated, _, _ = block(features, supervise=False)
+    finally:
+        h1.remove()
+        h2.remove()
+    assert captured['context'] is captured['coarse']
+    assert all(torch.equal(a, b) for a, b in zip(features, updated))
+    assert not block.return_to_stride4.pool_context
+    with torch.no_grad():
+        block.return_to_stride4.channel_gate.fill_(.1)
+        block.cross['32'].channel_gate.fill_(.1)
+    updated, _, _ = block(features, supervise=False)
+    assert updated[0].shape == features[0].shape
+    assert not torch.equal(updated[0], features[0])
+    updated[0].square().mean().backward()
+    assert block.return_to_stride4.attention.in_proj_weight.grad.abs().sum() > 0
+    assert block.cross['32'].attention.in_proj_weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize('kwargs', [
+    dict(disentangle_levels=(4, 32), disentangle_mode='supervision'),
+    dict(disentangle_levels=(8, 32)),
+    dict(disentangle_levels=()),
+])
+def test_return_attention_requires_fused_fine_and_coarse_levels(kwargs):
+    with pytest.raises(ValueError, match='requires fuse mode'):
+        ModelConfig(**kwargs, disentangle_return_to_stride4=True)
+
+
 def pyramid(size=64, batch=2):
     return [torch.randn(batch, c, size // s, size // s) for s, c in zip(STRIDES, CHANNELS)]
 

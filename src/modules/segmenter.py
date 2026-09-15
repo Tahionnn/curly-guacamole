@@ -16,7 +16,7 @@ class Segmenter(nn.Module):
                  aux_weight=0.4, *, pretrained=True, jpeg_similarity=False,
                  disentangle_levels=(), disentangle_mode='fuse', disentangle_reduction=16,
                  disentangle_cross_strides=(), disentangle_attention_width=128,
-                 disentangle_attention_heads=4):
+                 disentangle_attention_heads=4, disentangle_return_to_stride4=False):
         super().__init__()
         # Construction order is part of reproducible baseline initialization.
         self.encoder, self.strides, self.channels = build_timm_encoder(
@@ -37,6 +37,7 @@ class Segmenter(nn.Module):
             cross_strides=disentangle_cross_strides,
             attention_width=disentangle_attention_width,
             attention_heads=disentangle_attention_heads,
+            return_to_stride4=disentangle_return_to_stride4,
         ) if disentangle_levels else None
 
     def disentangle_gate_stats(self) -> dict[str, float]:
