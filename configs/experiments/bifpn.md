@@ -2,7 +2,9 @@
 
 Путь: B2-Li → JPEG fusion → DG patch/edge → BiFPN → EMCAD → маска.
 Классификационная голова читает прежний выход DG до BiFPN. Cross-attention и
-обратный attention 32→4 отключены во всех конфигурациях этой серии.
+обратный attention 32→4 отключены в исходных конфигурациях этой серии.
+Вариант `w64_r2_cross32` добавляет attention 16→32 после JPEG/DG fusion,
+до BiFPN; обратный attention 32→4 остаётся отключён.
 
 BiFPN получает четыре карты strides 4/8/16/32, проецирует их в общую ширину,
 выполняет проход 32→16→8→4, затем 4→8→16→32. Промежуточные узлы обратного
@@ -42,7 +44,7 @@ patch/edge. DG-головы расположены до BiFPN; он получа
 ## Запуск
 
 Ноутбук: notebooks/disentangle_bifpn.ipynb. Выбор arm: control, w64_r1,
-w64_r2, w128_r1, w128_r2. По умолчанию w64_r2, общий размер 704.
+w64_r2, w64_r2_cross32, w128_r1, w128_r2. По умолчанию w64_r2_cross32, общий размер 704.
 use_max_size=True переключает на максимум из таблицы и новое имя run.
 
 Все YAML начинаются с disentangle_b2_li704_bifpn_. Общий контроль наследует
@@ -63,3 +65,21 @@ python -m src.training --config configs/experiments/disentangle_b2_li704_bifpn_w
 Проверки: tests/test_bifpn.py; полный набор тестов и GPU BF16 smoke.
 Численные результаты: runs/bifpn_budget_20260915/measurements.json и
 cuda_verification.json.
+
+## BiFPN 64×2 + attention 16→32
+
+Конфиг `disentangle_b2_li704_bifpn_w64_r2_cross32.yaml` наследует вариант
+без attention и меняет только run_name и disentangle_cross_strides: [32].
+Обучение и losses прежние. Сравнение: arm=w64_r2 против w64_r2_cross32,
+одинаковый use_max_size, seed и batch. При use_max_size=True оба используют 752.
+
+Полный eval FlopCounterMode, native JPEG 1080×1920:
+
+| RGB | GFLOPs |
+|---|---|
+| 704 | 86.907746640 |
+| 752 | 99.145330684 |
+| 760 | 101.618514180 |
+
+Максимум с шагом 8 — 752. Добавка attention при 704: 0.349904896 GFLOPs.
+Результаты: runs/bifpn_budget_20260915/cross32_measurements.json.
