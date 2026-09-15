@@ -1,0 +1,16 @@
+# Max RGB size (step 8) under 100 GFLOPs with native JPEG up to Full HD.
+# DG cross32: 760 -> 99.358 GFLOPs; 768 -> 100.377 at native 1080x1920.
+extends: disentangle_fuse_cross32.yaml
+run_name: disentangle_b2_li760_long
+model:
+  encoder: pvt_v2_b2_li
+  jpeg_specialize_width: false
+  jpeg_pointwise_matmul: false
+dataset:
+  image_size: 760
+  rgb_uint8_transport: false
+train:
+  epochs: 18
+  full_pass_epochs: 3
+augmentation:
+  final_full_frame_epochs: 3
