@@ -1,0 +1,10 @@
+# Maximum RGB size in steps of 8 under 100 GFLOPs, native JPEG Full HD.
+# Reduction 8: 760 = 99.704633524 GFLOPs; 768 = 100.726985472.
+extends: disentangle_b2_li760_long.yaml
+run_name: disentangle_b2_li760_r8_long
+model:
+  disentangle_reduction: 8
+  disentangle_cross_strides: [32]
+  disentangle_parallel_16_32: false
+  disentangle_return_to_stride4: false
+  bifpn_repeats: 0
