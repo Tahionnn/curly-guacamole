@@ -1,0 +1,5 @@
+extends: disentangle_b2_li704_bifpn_control.yaml
+run_name: disentangle_b2_li704_bifpn_w64_r2
+model:
+  bifpn_width: 64
+  bifpn_repeats: 2

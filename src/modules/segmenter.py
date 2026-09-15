@@ -16,7 +16,8 @@ class Segmenter(nn.Module):
                  aux_weight=0.4, *, pretrained=True, jpeg_similarity=False,
                  disentangle_levels=(), disentangle_mode='fuse', disentangle_reduction=16,
                  disentangle_cross_strides=(), disentangle_attention_width=128,
-                 disentangle_attention_heads=4, disentangle_return_to_stride4=False):
+                 disentangle_attention_heads=4, disentangle_return_to_stride4=False,
+                 bifpn_width=64, bifpn_repeats=0):
         super().__init__()
         # Construction order is part of reproducible baseline initialization.
         self.encoder, self.strides, self.channels = build_timm_encoder(
@@ -39,6 +40,10 @@ class Segmenter(nn.Module):
             attention_heads=disentangle_attention_heads,
             return_to_stride4=disentangle_return_to_stride4,
         ) if disentangle_levels else None
+        self.bifpn = None
+        if bifpn_repeats:
+            from src.modules.bifpn import BiFPN
+            self.bifpn = BiFPN(self.channels, self.strides, width=bifpn_width, repeats=bifpn_repeats)
 
     def disentangle_gate_stats(self) -> dict[str, float]:
         """Detached residual-gate statistics, zero when the module is disabled."""
@@ -58,7 +63,8 @@ class Segmenter(nn.Module):
         if self.disentangle is not None:
             encoder_features, patch_logits, edge_logits = self.disentangle(
                 encoder_features, supervise=self.training)
-        decoder_features, aux_logits = self.decoder(encoder_features)
+        decoder_inputs = self.bifpn(encoder_features) if self.bifpn is not None else encoder_features
+        decoder_features, aux_logits = self.decoder(decoder_inputs)
         result = {
             "logits": self._resize(self.segmentation_head(decoder_features), input_size),
             "cls_logits": self.classification_head(encoder_features[-1]),

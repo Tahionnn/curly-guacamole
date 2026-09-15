@@ -72,9 +72,15 @@ class ModelConfig(ConfigSection):
     disentangle_attention_width: int = 128
     disentangle_attention_heads: int = 4
     disentangle_return_to_stride4: bool = False
+    bifpn_width: int = 64
+    bifpn_repeats: int = 0
 
     def __post_init__(self):
         _non_empty_str(self.encoder, 'model.encoder')
+        if type(self.bifpn_width) is not int or self.bifpn_width < 1:
+            raise ValueError('model.bifpn_width must be a positive integer')
+        if type(self.bifpn_repeats) is not int or self.bifpn_repeats < 0:
+            raise ValueError('model.bifpn_repeats must be a nonnegative integer')
         if type(self.jpeg_similarity) is not bool:
             raise ValueError('model.jpeg_similarity must be a boolean')
         if type(self.jpeg_specialize_width) is not bool:
