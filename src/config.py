@@ -64,9 +64,18 @@ class ModelConfig(ConfigSection):
     jpeg_pretrained: str | None = 'DCT_djpeg.pth'
     jpeg_specialize_width: bool = True
     jpeg_pointwise_matmul: bool = True
+    jpeg_similarity: bool = False
+    disentangle_levels: tuple[int, ...] = ()
+    disentangle_mode: str = 'fuse'
+    disentangle_reduction: int = 16
+    disentangle_cross_strides: tuple[int, ...] = ()
+    disentangle_attention_width: int = 128
+    disentangle_attention_heads: int = 4
 
     def __post_init__(self):
         _non_empty_str(self.encoder, 'model.encoder')
+        if type(self.jpeg_similarity) is not bool:
+            raise ValueError('model.jpeg_similarity must be a boolean')
         if type(self.jpeg_specialize_width) is not bool:
             raise ValueError('model.jpeg_specialize_width must be a boolean')
         if type(self.jpeg_pointwise_matmul) is not bool:
@@ -76,6 +85,26 @@ class ModelConfig(ConfigSection):
             raise ValueError('model.jpeg_channels must contain three positive integers')
         if self.jpeg_pretrained is not None:
             _non_empty_str(self.jpeg_pretrained, 'model.jpeg_pretrained')
+        object.__setattr__(self, 'disentangle_levels', tuple(self.disentangle_levels))
+        object.__setattr__(self, 'disentangle_cross_strides', tuple(self.disentangle_cross_strides))
+        strides = self.disentangle_levels + self.disentangle_cross_strides
+        if any(type(stride) is not int or stride < 1 for stride in strides):
+            raise ValueError('model.disentangle strides must be positive integers')
+        if len(set(self.disentangle_levels)) != len(self.disentangle_levels):
+            raise ValueError('model.disentangle_levels must be unique')
+        if self.disentangle_mode not in {'supervision', 'fuse'}:
+            raise ValueError("model.disentangle_mode must be 'supervision' or 'fuse'")
+        for key in ('disentangle_reduction', 'disentangle_attention_width', 'disentangle_attention_heads'):
+            if type(getattr(self, key)) is not int or getattr(self, key) < 1:
+                raise ValueError(f'model.{key} must be a positive integer')
+        if self.disentangle_attention_width % self.disentangle_attention_heads:
+            raise ValueError('model.disentangle_attention_width must divide by the head count')
+        if self.disentangle_cross_strides and not self.disentangle_levels:
+            raise ValueError('disentangle_cross_strides requires disentangle_levels')
+        if self.disentangle_cross_strides and self.disentangle_mode != 'fuse':
+            raise ValueError('disentangle_cross_strides requires disentangle_mode=fuse')
+        if set(self.disentangle_cross_strides) - set(self.disentangle_levels):
+            raise ValueError('every disentangle cross stride must also be a disentangle level')
 
 
 @dataclass(frozen=True)
@@ -187,10 +216,18 @@ class EvalConfig(ConfigSection):
 class LossConfig(ConfigSection):
     dice_weight: float = 1.0
     aux_weight: float = .4
+    patch_weight: float = 0.
+    edge_weight: float = 0.
+    edge_band: int = 3
+    edge_max_pos_weight: float = 50.
 
     def __post_init__(self):
-        for name in ('dice_weight', 'aux_weight'):
+        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight'):
             _nonnegative(getattr(self, name), f'loss.{name}')
+        if type(self.edge_band) is not int or self.edge_band < 1 or not self.edge_band % 2:
+            raise ValueError('loss.edge_band must be a positive odd integer')
+        if not math.isfinite(self.edge_max_pos_weight) or self.edge_max_pos_weight < 1:
+            raise ValueError('loss.edge_max_pos_weight must be finite and at least 1')
 
 
 @dataclass(frozen=True)
@@ -232,6 +269,8 @@ class ExperimentConfig:
             raise ValueError('augmentation.final_full_frame_epochs must not exceed train.epochs')
         if self.train.full_pass_epochs > self.augmentation.final_full_frame_epochs:
             raise ValueError('train.full_pass_epochs requires matching final_full_frame_epochs')
+        if (self.loss.patch_weight or self.loss.edge_weight) and not self.model.disentangle_levels:
+            raise ValueError('patch/edge supervision requires model.disentangle_levels')
 
     def to_dict(self):
         result = {'pipeline_version': PIPELINE_VERSION, 'run_name': self.run_name,

@@ -67,7 +67,14 @@ def build_model(config: ModelConfig, *, aux_weight: float = .4, pretrained: bool
     from src.modules.sync_batchnorm import SynchronizedBatchNorm
 
     model = Segmenter(encoder=config.encoder, jpeg_channels=config.jpeg_channels,
-                      aux_weight=aux_weight, pretrained=pretrained)
+                      aux_weight=aux_weight, pretrained=pretrained,
+                      jpeg_similarity=config.jpeg_similarity,
+                      disentangle_levels=config.disentangle_levels,
+                      disentangle_mode=config.disentangle_mode,
+                      disentangle_reduction=config.disentangle_reduction,
+                      disentangle_cross_strides=config.disentangle_cross_strides,
+                      disentangle_attention_width=config.disentangle_attention_width,
+                      disentangle_attention_heads=config.disentangle_attention_heads)
     model.forensic_fusion.branch.artifact.dc_layer0_dil[0].specialize_width = config.jpeg_specialize_width
     model.forensic_fusion.branch.artifact.dc_layer1_tail[0].use_matmul = config.jpeg_pointwise_matmul
     if pretrained and config.jpeg_pretrained is not None:

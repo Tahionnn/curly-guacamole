@@ -25,6 +25,31 @@ def bce_loss(logits, targets, valid_mask=None):
         return (weighted / valid_mask.flatten(1).sum(1).clamp_min(1)).mean()
     return F.binary_cross_entropy_with_logits(logits, targets)
 
+
+def coarse_target(target, size):
+    """Soft occupancy of the target inside each cell of a coarser grid."""
+    return F.interpolate(target, size=size, mode='area')
+
+
+def edge_band_target(occupancy, width):
+    """Morphological gradient of the occupied cells: dilation minus erosion.
+
+    Both are max pooling, so the band needs no loader work and follows whatever
+    geometry the batch already has.
+    """
+    occupied = (occupancy > 0).float()
+    dilated = F.max_pool2d(occupied, width, stride=1, padding=width // 2)
+    eroded = -F.max_pool2d(-occupied, width, stride=1, padding=width // 2)
+    return dilated - eroded
+
+
+def edge_loss(logits, band, max_pos_weight):
+    """Balance sparse boundary positives, capping their weight for stability."""
+    positive = band.sum()
+    pos_weight = ((band.numel() - positive) / positive.clamp_min(1)).clamp(1, max_pos_weight)
+    return F.binary_cross_entropy_with_logits(logits, band, pos_weight=pos_weight)
+
+
 @dataclass(frozen=True)
 class LossResult:
     total: torch.Tensor
@@ -35,13 +60,22 @@ class LossResult:
 class SegmentationLoss(torch.nn.Module):
     """BCE + all-image Dice, classifier BCE and decoder auxiliary supervision."""
 
-    def __init__(self, *, dice_weight=1.0, aux_weight=.4):
+    def __init__(self, *, dice_weight=1.0, aux_weight=.4, patch_weight=0., edge_weight=0.,
+                 edge_band=3, edge_max_pos_weight=50.):
         super().__init__()
-        for value in (dice_weight, aux_weight):
+        for value in (dice_weight, aux_weight, patch_weight, edge_weight):
             if not math.isfinite(value) or value < 0:
                 raise ValueError('Loss weights must be finite and nonnegative')
+        if type(edge_band) is not int or edge_band < 1 or not edge_band % 2:
+            raise ValueError('edge_band must be a positive odd integer')
+        if not math.isfinite(edge_max_pos_weight) or edge_max_pos_weight < 1:
+            raise ValueError('edge_max_pos_weight must be finite and at least 1')
         self.dice_weight = dice_weight
         self.aux_weight = aux_weight
+        self.patch_weight = patch_weight
+        self.edge_weight = edge_weight
+        self.edge_band = edge_band
+        self.edge_max_pos_weight = edge_max_pos_weight
 
     @staticmethod
     def _dice(logits, target):
@@ -66,6 +100,23 @@ class SegmentationLoss(torch.nn.Module):
             logits = out['aux_logits'].float()
             components['aux_bce'] = self.aux_weight * bce_loss(logits, target)
             components['aux_dice'] = self.aux_weight * self.dice_weight * self._dice(logits, target)[0]
+        if self.patch_weight > 0 and out.get('patch_logits'):
+            pixel, overlap = [], []
+            for logits in out['patch_logits'].values():
+                logits = logits.float()
+                occupancy = coarse_target(target, logits.shape[-2:])
+                pixel.append(bce_loss(logits, occupancy))
+                overlap.append(self._dice(logits, occupancy)[0])
+            components['patch_bce'] = self.patch_weight * torch.stack(pixel).mean()
+            components['patch_dice'] = self.patch_weight * self.dice_weight * torch.stack(overlap).mean()
+        if self.edge_weight > 0 and out.get('edge_logits'):
+            band = []
+            for logits in out['edge_logits'].values():
+                logits = logits.float()
+                occupancy = coarse_target(target, logits.shape[-2:])
+                band.append(edge_loss(logits, edge_band_target(occupancy, self.edge_band),
+                                      self.edge_max_pos_weight))
+            components['edge_bce'] = self.edge_weight * torch.stack(band).mean()
         diagnostics = {'dice_pos': ((per_image * positive).sum(), positive.sum()),
                        'dice_neg': ((per_image * ~positive).sum(), (~positive).sum())}
         return LossResult(sum(components.values()), components, diagnostics)

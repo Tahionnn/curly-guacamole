@@ -446,6 +446,7 @@ class ExperimentRunner:
                 "train/lr": optimizer.param_groups[0]["lr"],
                 "train/skipped_steps": train_result.skipped_steps,
                 "train/fmap_gamma": model.forensic_gate_stats()["max_abs"],
+                "train/disentangle_gamma": model.disentangle_gate_stats()["max_abs"],
                 "val/aic_tuned": tuned.aic,
                 "val/dice_tuned": tuned.dice_pos,
                 "val/fpr_tuned": tuned.fpr_neg,

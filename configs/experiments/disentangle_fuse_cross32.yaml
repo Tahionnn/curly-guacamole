@@ -1,0 +1,6 @@
+# Arm M: arm D plus cross-scale attention at stride 32 - the coarse level reads
+# the finer one. Stride 8 would cost 15 GFLOPs and is deliberately excluded.
+extends: disentangle_fuse.yaml
+run_name: disentangle_fuse_cross32
+model:
+  disentangle_cross_strides: [32]

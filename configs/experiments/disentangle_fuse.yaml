@@ -1,0 +1,11 @@
+# Arm D: the same supervision plus the disentangled residual in the forward path
+# (PFD + depthwise-separable EFD + per-token balance, zero-initialised gate).
+extends: ../baseline.yaml
+run_name: disentangle_fuse
+model:
+  disentangle_levels: [4, 8, 16, 32]
+  disentangle_mode: fuse
+loss:
+  patch_weight: 0.5
+  edge_weight: 0.5
+  edge_band: 3

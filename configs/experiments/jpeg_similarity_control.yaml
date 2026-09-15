@@ -1,0 +1,6 @@
+extends: ../baseline.yaml
+run_name: jpeg_similarity_control
+model:
+  jpeg_similarity: false
+train:
+  resume: true

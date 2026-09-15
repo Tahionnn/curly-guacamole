@@ -37,6 +37,8 @@ def test_pretrained_recipe_and_builder_gate(monkeypatch):
         def __init__(self, **kwargs):
             from types import SimpleNamespace
             self.forensic_fusion = SimpleNamespace(branch=SimpleNamespace(artifact=self))
+            self.dc_layer0_dil = [SimpleNamespace()]
+            self.dc_layer1_tail = [SimpleNamespace()]
 
         def load_pretrained(self, path):
             calls.append(path)

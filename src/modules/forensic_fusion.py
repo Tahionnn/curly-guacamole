@@ -48,6 +48,8 @@ class ForensicFusion(nn.Module):
         sizes = {s: encoder_features[self.encoder_strides.index(s)].shape[-2:]
                  for s in self.fusion_strides}
         jpeg_features = self.branch(jpeg, sizes)
+        if hasattr(self, 'similarity'):
+            jpeg_features[32] = self.similarity(jpeg_features[32])
         for stride in self.fusion_strides:
             index = self.encoder_strides.index(stride)
             encoder_features[index] = self.fusion_blocks[str(stride)](

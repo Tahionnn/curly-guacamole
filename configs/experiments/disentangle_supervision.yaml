@@ -1,0 +1,14 @@
+# Arm S: dense patch/edge supervision inside the pyramid, nothing in the forward
+# path. Zero GFLOPs at inference - the heads exist only during training.
+extends: ../baseline.yaml
+run_name: disentangle_supervision
+model:
+  disentangle_levels: [4, 8, 16, 32]
+  disentangle_mode: supervision
+loss:
+  # DG-Force weights 2.0 mask / 1.0 patch / 1.0 edge; our mask term is 1.0.
+  patch_weight: 0.5
+  edge_weight: 0.5
+  # Their band is 7 px at 512. Half our deficit sits on masks under 5% of area,
+  # which a band that wide swallows; 3 cells is the minimum on the stage grid.
+  edge_band: 3

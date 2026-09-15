@@ -234,7 +234,8 @@ def test_epoch_logs_loss_components_and_fixed_validation(tmp_path, pixel_loss, b
     validation = ValidationResult(acc, score, loss_components=components, fixed=score)
     result = EpochTrainResult(.9, 0, 2, .5, {"total": .9, "bce": .2, "dice": .4, "cls": .3, "dice_pos": .5})
     with Run.create(tmp_path, "logging", tensorboard=False) as run:
-        runner._log_epoch(run=run, epoch=0, model=SimpleNamespace(forensic_gate_stats=lambda: {"max_abs": 0}),
+        runner._log_epoch(run=run, epoch=0, model=SimpleNamespace(forensic_gate_stats=lambda: {"max_abs": 0},
+                                               disentangle_gate_stats=lambda: {"max_abs": 0}),
                           train_result=result, tuned=score, seen_total=2, started=time.time(), steps_per_epoch=1,
                           optimizer=SimpleNamespace(param_groups=[{"lr": .001}]), validation=validation)
     row = json.loads(run.jsonl_path.read_text(encoding="utf-8").splitlines()[0])

@@ -43,6 +43,9 @@ class TinyModel(torch.nn.Module):
     def forensic_gate_stats(self):
         return {'max_abs': 0.}
 
+    def disentangle_gate_stats(self):
+        return {'max_abs': 0.}
+
 
 def configure_tiny_run(tmp_path, monkeypatch):
     import src.training.engine as engine
