@@ -1,3 +1,4 @@
+import torch
 import torch.nn.functional as F
 from torch import nn
 
@@ -18,7 +19,7 @@ class Segmenter(nn.Module):
                  disentangle_cross_strides=(), disentangle_attention_width=128,
                  disentangle_attention_heads=4, disentangle_return_to_stride4=False,
                  disentangle_parallel_16_32=False,
-                 bifpn_width=64, bifpn_repeats=0):
+                 bifpn_width=64, bifpn_repeats=0, pristine_reference=False):
         super().__init__()
         # Construction order is part of reproducible baseline initialization.
         self.encoder, self.strides, self.channels = build_timm_encoder(
@@ -46,6 +47,12 @@ class Segmenter(nn.Module):
         if bifpn_repeats:
             from src.modules.bifpn import BiFPN
             self.bifpn = BiFPN(self.channels, self.strides, width=bifpn_width, repeats=bifpn_repeats)
+        self.reference_head = None
+        if pristine_reference:
+            from src.modules.pristine_reference import PristineReferenceHead
+            # Do not shift the CPU sampler/loader RNG relative to the control arm.
+            with torch.random.fork_rng(devices=[]):
+                self.reference_head = PristineReferenceHead(jpeg_channels[0])
 
     def disentangle_gate_stats(self) -> dict[str, float]:
         """Detached residual-gate statistics, zero when the module is disabled."""
@@ -60,7 +67,17 @@ class Segmenter(nn.Module):
             raise ValueError('jpeg inputs must contain one native frame per image')
         input_size = image.shape[-2:]
         image = self.input_normalization(image)
-        encoder_features = self.forensic_fusion(list(self.encoder(image)), jpeg=jpeg)
+        encoder_features = self.forensic_fusion(list(self.encoder(image)), jpeg=jpeg,
+                                                return_jpeg8=self.reference_head is not None)
+        reference = None
+        if self.reference_head is not None:
+            encoder_features, jpeg8 = encoder_features
+            if jpeg8 is None:
+                shape = encoder_features[self.strides.index(8)].shape[-2:]
+                jpeg8 = image.new_zeros(image.shape[0], self.reference_head.embedding[0].in_channels, *shape)
+            reference = self.reference_head(jpeg8)
+            reference['available'] = torch.tensor([sample.get('available', True) for sample in jpeg],
+                                                  device=image.device, dtype=torch.bool)
         patch_logits, edge_logits = {}, {}
         if self.disentangle is not None:
             encoder_features, patch_logits, edge_logits = self.disentangle(
@@ -71,6 +88,11 @@ class Segmenter(nn.Module):
             "logits": self._resize(self.segmentation_head(decoder_features), input_size),
             "cls_logits": self.classification_head(encoder_features[-1]),
         }
+        if reference is not None:
+            valid = reference['available'][:, None, None, None]
+            result['logits'] = result['logits'] + self._resize(reference['correction'] * valid, input_size)
+            if self.training:
+                result['reference'] = reference
         if self.training and aux_logits is not None:
             result["aux_logits"] = self._resize(aux_logits, input_size)
         if patch_logits:

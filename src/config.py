@@ -75,9 +75,12 @@ class ModelConfig(ConfigSection):
     disentangle_return_to_stride4: bool = False
     bifpn_width: int = 64
     bifpn_repeats: int = 0
+    pristine_reference: bool = False
 
     def __post_init__(self):
         _non_empty_str(self.encoder, 'model.encoder')
+        if type(self.pristine_reference) is not bool:
+            raise ValueError('model.pristine_reference must be a boolean')
         if type(self.bifpn_width) is not int or self.bifpn_width < 1:
             raise ValueError('model.bifpn_width must be a positive integer')
         if type(self.bifpn_repeats) is not int or self.bifpn_repeats < 0:
@@ -168,6 +171,7 @@ class TrainConfig(ConfigSection):
     finetune_from: str | None = None
     finetune_weights: str = 'model'
     plain_nonunit_focus: bool = False
+    reference_lr: float = 3e-4
 
     def __post_init__(self):
         self.validate()
@@ -194,7 +198,7 @@ class TrainConfig(ConfigSection):
             raise ValueError('train.workers must be a nonnegative integer')
         if type(self.full_pass_epochs) is not int or not 0 <= self.full_pass_epochs <= self.epochs:
             raise ValueError('train.full_pass_epochs must be an integer in [0, epochs]')
-        for name in ('encoder_lr', 'jpeg_lr', 'head_lr'):
+        for name in ('encoder_lr', 'jpeg_lr', 'head_lr', 'reference_lr'):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f'train.{name} must be finite and positive')
@@ -243,9 +247,10 @@ class LossConfig(ConfigSection):
     edge_weight: float = 0.
     edge_band: int = 3
     edge_max_pos_weight: float = 50.
+    reference_weight: float = 0.
 
     def __post_init__(self):
-        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight'):
+        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight'):
             _nonnegative(getattr(self, name), f'loss.{name}')
         if type(self.edge_band) is not int or self.edge_band < 1 or not self.edge_band % 2:
             raise ValueError('loss.edge_band must be a positive odd integer')
@@ -294,6 +299,8 @@ class ExperimentConfig:
             raise ValueError('train.full_pass_epochs requires matching final_full_frame_epochs')
         if (self.loss.patch_weight or self.loss.edge_weight) and not self.model.disentangle_levels:
             raise ValueError('patch/edge supervision requires model.disentangle_levels')
+        if self.loss.reference_weight and not self.model.pristine_reference:
+            raise ValueError('reference supervision requires model.pristine_reference')
 
     def to_dict(self):
         result = {'pipeline_version': PIPELINE_VERSION, 'run_name': self.run_name,

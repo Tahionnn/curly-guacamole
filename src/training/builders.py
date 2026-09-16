@@ -77,7 +77,8 @@ def build_model(config: ModelConfig, *, aux_weight: float = .4, pretrained: bool
                       disentangle_attention_heads=config.disentangle_attention_heads,
                       disentangle_return_to_stride4=config.disentangle_return_to_stride4,
                       disentangle_parallel_16_32=config.disentangle_parallel_16_32,
-                      bifpn_width=config.bifpn_width, bifpn_repeats=config.bifpn_repeats)
+                      bifpn_width=config.bifpn_width, bifpn_repeats=config.bifpn_repeats,
+                      pristine_reference=config.pristine_reference)
     model.forensic_fusion.branch.artifact.dc_layer0_dil[0].specialize_width = config.jpeg_specialize_width
     model.forensic_fusion.branch.artifact.dc_layer1_tail[0].use_matmul = config.jpeg_pointwise_matmul
     if pretrained and config.jpeg_pretrained is not None:
@@ -192,12 +193,15 @@ def build_optimizer(
     model,
 ) -> torch.optim.AdamW:
     """AdamW with separate LR/weight decay for encoder, forensic branch and decoder."""
-    groups = {"enc": [], "enc_nd": [], "jpeg": [], "jpeg_nd": [], "dec": [], "dec_nd": []}
+    groups = {"enc": [], "enc_nd": [], "jpeg": [], "jpeg_nd": [], "dec": [], "dec_nd": [],
+              "reference": [], "reference_nd": []}
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
         no_decay = parameter.ndim <= 1 or name.endswith(("channel_gate", "gamma"))
-        if name.startswith(("forensic_fusion.", "branch.", "fuse.")):
+        if name.startswith('reference_head.'):
+            groups['reference_nd' if no_decay else 'reference'].append(parameter)
+        elif name.startswith(("forensic_fusion.", "branch.", "fuse.")):
             groups["jpeg_nd" if no_decay else "jpeg"].append(parameter)
         elif name.startswith("encoder.") and not name.startswith('encoder.fusions.'):
             groups["enc_nd" if no_decay else "enc"].append(parameter)
@@ -211,6 +215,8 @@ def build_optimizer(
         {"params": groups["jpeg_nd"], "lr": config.jpeg_lr, "weight_decay": 0.0},
         {"params": groups["dec"], "lr": config.head_lr, "weight_decay": config.weight_decay},
         {"params": groups["dec_nd"], "lr": config.head_lr, "weight_decay": 0.0},
+        {"params": groups["reference"], "lr": config.reference_lr, "weight_decay": config.weight_decay},
+        {"params": groups["reference_nd"], "lr": config.reference_lr, "weight_decay": 0.0},
     ]
     return torch.optim.AdamW([group for group in param_groups if group["params"]])
 

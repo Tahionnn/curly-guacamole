@@ -1,0 +1,6 @@
+extends: disentangle_b2_li760_r8_reference_ft.yaml
+run_name: disentangle_b2_li760_r8_reference_control_ft
+model:
+  pristine_reference: false
+loss:
+  reference_weight: 0.0

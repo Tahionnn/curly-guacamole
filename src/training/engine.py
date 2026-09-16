@@ -5,7 +5,7 @@ import os
 import time
 from collections.abc import Iterable, Sized
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import torch
 from torch import nn
@@ -311,7 +311,11 @@ class ExperimentRunner:
                 or source.model.jpeg_channels != cfg.model.jpeg_channels
                 or (source.loss.aux_weight > 0) != (cfg.loss.aux_weight > 0)):
             raise ValueError('Finetune requires matching encoder, JPEG channels and auxiliary head')
-        model.load_state_dict(saved[cfg.train.finetune_weights])
+        from src.training.finetune import FinetuneWeights
+        initialize_reference = cfg.model.pristine_reference and not source.model.pristine_reference
+        if initialize_reference and replace(source.model, pristine_reference=True) != cfg.model:
+            raise ValueError('Adding the reference head requires an otherwise identical source architecture')
+        FinetuneWeights.load(model, saved[cfg.train.finetune_weights], initialize_reference=initialize_reference)
 
     def _check_resume_protocol(self) -> None:
         cfg = self.config

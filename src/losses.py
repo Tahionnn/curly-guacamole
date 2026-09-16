@@ -61,9 +61,9 @@ class SegmentationLoss(torch.nn.Module):
     """BCE + all-image Dice, classifier BCE and decoder auxiliary supervision."""
 
     def __init__(self, *, dice_weight=1.0, aux_weight=.4, patch_weight=0., edge_weight=0.,
-                 edge_band=3, edge_max_pos_weight=50.):
+                 edge_band=3, edge_max_pos_weight=50., reference_weight=0.):
         super().__init__()
-        for value in (dice_weight, aux_weight, patch_weight, edge_weight):
+        for value in (dice_weight, aux_weight, patch_weight, edge_weight, reference_weight):
             if not math.isfinite(value) or value < 0:
                 raise ValueError('Loss weights must be finite and nonnegative')
         if type(edge_band) is not int or edge_band < 1 or not edge_band % 2:
@@ -76,6 +76,7 @@ class SegmentationLoss(torch.nn.Module):
         self.edge_weight = edge_weight
         self.edge_band = edge_band
         self.edge_max_pos_weight = edge_max_pos_weight
+        self.reference_weight = reference_weight
 
     @staticmethod
     def _dice(logits, target):
@@ -117,6 +118,12 @@ class SegmentationLoss(torch.nn.Module):
                 band.append(edge_loss(logits, edge_band_target(occupancy, self.edge_band),
                                       self.edge_max_pos_weight))
             components['edge_bce'] = self.edge_weight * torch.stack(band).mean()
+        if self.training and self.reference_weight > 0:
+            if 'reference' not in out:
+                raise ValueError('reference_weight requires training output from a pristine reference head')
+            from src.modules.pristine_reference import PristineReferenceHead
+            terms = PristineReferenceHead.supervision(out['reference'], target, out['reference']['available'])
+            components.update({key: self.reference_weight * value for key, value in terms.items()})
         diagnostics = {'dice_pos': ((per_image * positive).sum(), positive.sum()),
                        'dice_neg': ((per_image * ~positive).sum(), (~positive).sum())}
         return LossResult(sum(components.values()), components, diagnostics)

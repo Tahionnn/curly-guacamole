@@ -33,17 +33,23 @@ class ForensicFusion(nn.Module):
         return {"max_abs": max(float(block.channel_gate.detach().abs().max())
                                for block in self.fusion_blocks.values())}
 
-    def forward(self, encoder_features, *, jpeg):
+    def forward(self, encoder_features, *, jpeg, return_jpeg8=False):
         available = [i for i, sample in enumerate(jpeg) if sample.get('available', True)]
         if not available:
-            return encoder_features
+            return (encoder_features, None) if return_jpeg8 else encoder_features
         if len(available) != len(jpeg):
             # PNG samples bypass both the JPEG branch and fusion.
             subset = [feature[available] for feature in encoder_features]
-            updated = self.forward(subset, jpeg=[jpeg[i] for i in available])
+            updated = self.forward(subset, jpeg=[jpeg[i] for i in available], return_jpeg8=return_jpeg8)
+            if return_jpeg8:
+                updated, subset_jpeg8 = updated
             result = [feature.clone() for feature in encoder_features]
             for original, fused in zip(result, updated, strict=True):
                 original[available] = fused
+            if return_jpeg8:
+                jpeg8 = subset_jpeg8.new_zeros(len(jpeg), *subset_jpeg8.shape[1:])
+                jpeg8[available] = subset_jpeg8
+                return result, jpeg8
             return result
         sizes = {s: encoder_features[self.encoder_strides.index(s)].shape[-2:]
                  for s in self.fusion_strides}
@@ -54,4 +60,4 @@ class ForensicFusion(nn.Module):
             index = self.encoder_strides.index(stride)
             encoder_features[index] = self.fusion_blocks[str(stride)](
                 encoder_features[index], jpeg_features[stride])
-        return encoder_features
+        return (encoder_features, jpeg_features[8]) if return_jpeg8 else encoder_features

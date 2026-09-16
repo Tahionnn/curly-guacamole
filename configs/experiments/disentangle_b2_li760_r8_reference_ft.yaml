@@ -1,0 +1,25 @@
+extends: disentangle_b2_li760_r8_long.yaml
+run_name: disentangle_b2_li760_r8_reference_ft
+model:
+  pristine_reference: true
+loss:
+  # BCE of pristine probability + reference contamination + 0.1 * slot overlap.
+  reference_weight: 0.1
+train:
+  finetune_from: disentangle_b2_li760_r8_long/ckpt/best.pt
+  finetune_weights: ema
+  epochs: 6
+  full_pass_epochs: 0
+  samples_per_epoch: 24000
+  encoder_lr: 0.00001
+  jpeg_lr: 0.00003
+  head_lr: 0.00003
+  reference_lr: 0.0003
+  negative_fraction: 0.25
+  plain_nonunit_focus: false
+augmentation:
+  final_full_frame_epochs: 6
+  # Preserve the source JPEG recipe; test the new head separately.
+  jpeg_recompression_probability: 0.3
+  jpeg_grid_shift_probability: 0.0
+  jpeg_recompression_quality_range: [60, 100]
