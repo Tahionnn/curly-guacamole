@@ -1,0 +1,16 @@
+extends: disentangle_b2_li760_r8_long.yaml
+run_name: disentangle_b2_li760_r8_plain_nonunit_ft
+train:
+  finetune_from: disentangle_b2_li760_r8_long/ckpt/best.pt
+  finetune_weights: ema
+  plain_nonunit_focus: true
+  epochs: 3
+  full_pass_epochs: 0
+  samples_per_epoch: 24000
+  encoder_lr: 0.00001
+  jpeg_lr: 0.00003
+  head_lr: 0.00003
+  negative_fraction: 0.25
+augmentation:
+  final_full_frame_epochs: 3
+  jpeg_recompression_probability: 0.0

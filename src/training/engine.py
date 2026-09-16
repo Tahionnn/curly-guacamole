@@ -348,7 +348,11 @@ class ExperimentRunner:
         protocol = EvaluationProtocol.load(cfg.dataset.protocol_path)
         development = EvaluationReport.add_jpeg_metadata(protocol.rows('development'),
                                                          self.data_workspace.train_root, cfg.train.workers)
-        return protocol.rows('train'), development
+        train = protocol.rows('train')
+        if cfg.train.plain_nonunit_focus:
+            from src.training.domain_focus import PlainNonunitFocus
+            train = PlainNonunitFocus.select(train, self.data_workspace.train_root, cfg.train.workers)
+        return train, development
 
     def _snapshot(self, plain_config: dict, gflops: float) -> dict:
         result = {**plain_config, 'arm': self.arm, 'gflops': round(gflops, 3)}

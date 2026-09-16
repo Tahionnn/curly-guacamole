@@ -167,11 +167,14 @@ class TrainConfig(ConfigSection):
     # Model weights only; relative paths are resolved against paths.runs_path.
     finetune_from: str | None = None
     finetune_weights: str = 'model'
+    plain_nonunit_focus: bool = False
 
     def __post_init__(self):
         self.validate()
 
     def validate(self):
+        if type(self.plain_nonunit_focus) is not bool:
+            raise ValueError('plain_nonunit_focus must be boolean')
         if self.devices != 'auto':
             if (not isinstance(self.devices, (list, tuple)) or not self.devices
                     or any(type(index) is not int or index < 0 for index in self.devices)
