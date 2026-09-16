@@ -33,7 +33,8 @@ runs/
 # Competition submissions and temporary audits
 submissions/
 submissions_new/
-submission.zip
+*.zip
+!submission_template.zip
 predictions/
 tmp/
 %SystemDrive%/

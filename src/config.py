@@ -238,13 +238,14 @@ class EvalConfig(ConfigSection):
     mask_thresholds: tuple[float, ...] = DEFAULT_MASK_GRID
     cls_thresholds: tuple[float, ...] = (0., .2, .4, .5, .6, .7, .8, .9, .95)
     min_areas: tuple[float, ...] = (0.,)
+    area_caps: tuple[float, ...] = (0.,)
 
     def __post_init__(self):
         if isinstance(self.selection_small_mask_weight, bool) or not math.isfinite(self.selection_small_mask_weight) or self.selection_small_mask_weight <= 0:
             raise ValueError('eval.selection_small_mask_weight must be finite and positive')
         if type(self.n_bins) is not int or self.n_bins <= 0:
             raise ValueError('eval.n_bins must be a positive integer')
-        for name in ('mask_thresholds', 'cls_thresholds', 'min_areas'):
+        for name in ('mask_thresholds', 'cls_thresholds', 'min_areas', 'area_caps'):
             values = tuple(float(value) for value in getattr(self, name))
             object.__setattr__(self, name, values)
             _check_probability_grid(values, f'eval.{name}')

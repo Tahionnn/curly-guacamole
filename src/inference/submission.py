@@ -1,6 +1,8 @@
 """Build competition submission.csv and predictions/ from a saved run."""
 
+from collections import deque
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -18,6 +20,7 @@ from src.inference.predict import Prediction, Predictor, ThresholdConfig
 from src.progress import ConsoleProgress
 from src.training.builders import AmpContext, build_model
 from src.training.runs import Run
+from src.training.selection import RetunedSelection
 
 
 class SubmissionWriter:
@@ -51,7 +54,16 @@ class SubmissionWriter:
             raise ValueError(f"prediction path escapes output directory: {raw}")
         return resolved
 
-    def write(self, predictions: Iterable[Prediction]) -> Path:
+    @staticmethod
+    def _encode(mask: np.ndarray, path: Path) -> None:
+        Image.fromarray(mask).save(path, format='PNG')
+
+    def write(self, predictions: Iterable[Prediction], pool=None, queue_depth: int = 64) -> Path:
+        if type(queue_depth) is not int or queue_depth <= 0:
+            raise ValueError('queue_depth must be a positive integer')
+        for directory in {path.parent for path in self.paths.values()}:
+            directory.mkdir(parents=True, exist_ok=True)
+        pending = deque()
         for prediction in predictions:
             if prediction.image_path not in self.paths or prediction.image_path in self._written:
                 raise ValueError(f"unexpected or duplicate prediction: {prediction.image_path}")
@@ -59,9 +71,15 @@ class SubmissionWriter:
             if mask.ndim != 2 or mask.dtype != np.uint8 or not np.isin(mask, (0, 255)).all():
                 raise ValueError("prediction must be a single-channel uint8 mask containing only 0/255")
             path = self.paths[prediction.image_path]
-            path.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(mask).save(path, format="PNG")
+            if pool is None:
+                self._encode(mask, path)
+            else:
+                pending.append(pool.submit(self._encode, mask, path))
+                if len(pending) >= queue_depth:
+                    pending.popleft().result()
             self._written.add(prediction.image_path)
+        for future in pending:
+            future.result()
         if self._written != set(self.paths):
             raise ValueError("predictions are missing for some template rows")
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +120,9 @@ def create_submission(
     template_path: str | Path | None = None,
     device: str | None = None,
     checkpoint_name: str = 'best.pt',
+    batch_size: int | None = None,
+    workers: int | None = None,
+    post_workers: int = 8,
 ) -> Path:
     """Load the selected checkpoint (EMA preferred) and write the submission."""
     if checkpoint_name not in {'best.pt', 'last.pt'}:
@@ -110,14 +131,16 @@ def create_submission(
     run = Run.open(run_dir)
     config = InferenceConfig.from_snapshot(run.snapshot)
     if thresholds is None:
-        best = run.summary.get("best") or {}
-        keys = ("mask_threshold", "cls_threshold", "min_area")
-        if not all(key in best for key in keys):
-            raise ValueError("run summary has no operating point; pass thresholds explicitly")
-        thresholds = ThresholdConfig(**{key: float(best[key]) for key in keys})
+        RetunedSelection.verify(run.summary, run.snapshot, run.dir / 'ckpt' / checkpoint_name)
+        thresholds = ThresholdConfig.from_summary(run.summary, run.snapshot)
+    batch_size = config.batch_size if batch_size is None else batch_size
+    workers = config.workers if workers is None else workers
+    if (type(batch_size) is not int or batch_size <= 0 or type(workers) is not int or workers < 0
+            or type(post_workers) is not int or post_workers < 0):
+        raise ValueError('batch_size must be positive; workers and post_workers non-negative integers')
     ConsoleProgress.info(
         f"Submission: пороги mask={thresholds.mask_threshold:g}, "
-        f"cls={thresholds.cls_threshold:g}, min_area={thresholds.min_area:g}"
+        f"cls={thresholds.cls_threshold:g}, min_area={thresholds.min_area:g}, area_cap={thresholds.area_cap:g}"
     )
     ConsoleProgress.info("Submission: чтение тестовых данных и шаблона")
     workspace = DataWorkspace(Path(data_path) if data_path is not None else config.data_path)
@@ -128,10 +151,12 @@ def create_submission(
     inference_device = torch.device(device or config.device)
     ConsoleProgress.info(
         f"Submission: изображений {len(test_rows)}, устройство {inference_device}, "
-        f"batch_size={config.batch_size}"
+        f"batch_size={batch_size}, workers={workers}, post_workers={post_workers}"
     )
     amp = AmpContext(inference_device, torch.bfloat16 if config.amp == "bf16" else torch.float16,
                      inference_device.type == "cuda" and config.amp != "off", False)
+    if inference_device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     checkpoint_path = run.dir / "ckpt" / checkpoint_name
     ConsoleProgress.info(f"Submission: загрузка checkpoint {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
@@ -139,11 +164,19 @@ def create_submission(
     ConsoleProgress.info(f"Submission: создание модели и применение весов {weights}")
     model = build_model(config.model, aux_weight=config.aux_weight, pretrained=False)
     model.load_state_dict(checkpoint[weights])
-    loader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False, num_workers=config.workers,
-                        collate_fn=ValidationCollator())
+    del checkpoint
+    if inference_device.type == 'cuda':
+        model = model.to(memory_format=torch.channels_last)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=workers,
+                        collate_fn=ValidationCollator(), pin_memory=inference_device.type == 'cuda',
+                        persistent_workers=workers > 0, prefetch_factor=4 if workers > 0 else None)
     ConsoleProgress.info(f"Submission: перенос модели на {inference_device}")
     predictor = Predictor(model, thresholds, amp)
     batches = ConsoleProgress.iterate(loader, "Submission: предсказание и сохранение PNG (батчи)")
-    csv_path = writer.write(predictor.predict(batches))
+    if post_workers:
+        with ThreadPoolExecutor(max_workers=post_workers, thread_name_prefix='postprocess') as pool:
+            csv_path = writer.write(predictor.predict(batches, pool=pool), pool=pool)
+    else:
+        csv_path = writer.write(predictor.predict(batches))
     ConsoleProgress.info(f"Submission: готово, масок {len(test_rows)}, результат {csv_path.parent}")
     return csv_path

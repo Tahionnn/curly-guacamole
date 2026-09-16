@@ -38,6 +38,7 @@ import yaml
 
 from .metric import (
     DEFAULT_AREA_GRID,
+    DEFAULT_CAP_GRID,
     DEFAULT_CLS_GRID,
     DEFAULT_MASK_GRID,
     AICAccumulator,
@@ -81,9 +82,10 @@ class Eval:
         mask_thresholds=None,
         cls_thresholds=DEFAULT_CLS_GRID,
         min_areas=DEFAULT_AREA_GRID,
+        area_caps=DEFAULT_CAP_GRID,
     ) -> AICResult:
         grid = list(DEFAULT_MASK_GRID) if mask_thresholds is None else list(mask_thresholds)
-        return self.acc.best(grid, list(cls_thresholds), list(min_areas))
+        return self.acc.best(grid, list(cls_thresholds), list(min_areas), list(area_caps))
 
 
 class Run:
@@ -358,8 +360,8 @@ class Run:
                 f"смешало бы разные кадры"
             ) from error
 
-    def operating_point(self, name: str = "val") -> tuple[float, float, float]:
-        """`(mask_threshold, cls_threshold, min_area)` из сводки, иначе свипом.
+    def operating_point(self, name: str = "val") -> tuple[float, float, float, float]:
+        """`(mask_threshold, cls_threshold, min_area, area_cap)` из сводки, иначе свипом.
 
         Остаток прежнего `load_reference`: остальная его работа разошлась по
         `Run.open`, `history` и `load_eval`.
@@ -372,9 +374,10 @@ class Run:
                 float(best["mask_threshold"]),
                 float(best["cls_threshold"]),
                 float(best["min_area"]),
+                float(best.get("area_cap", 0.0)),
             )
         found = self.load_eval(name).best()
-        return (found.mask_threshold, found.cls_threshold, found.min_area)
+        return (found.mask_threshold, found.cls_threshold, found.min_area, found.area_cap)
 
     # --- чекпоинты -----------------------------------------------------------
 

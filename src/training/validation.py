@@ -11,7 +11,7 @@ from src.data.geometry import restore_probability
 from src.losses import LossMeter, SegmentationLoss
 from src.progress import ConsoleProgress
 from src.training.distributed import TrainingRuntime
-from src.training.metric import AICAccumulator, AICResult
+from src.training.metric import AICAccumulator, AICResult, threshold_bin
 from src.training.sampling import DistributedValidationSampler
 from src.training.transfer import BatchTransfer
 
@@ -31,8 +31,8 @@ class ValidationResult:
     fixed: AICResult | None = None
 
     @property
-    def operating_point(self) -> tuple[float, float, float]:
-        return (self.tuned.mask_threshold, self.tuned.cls_threshold, self.tuned.min_area)
+    def operating_point(self) -> tuple[float, float, float, float]:
+        return (self.tuned.mask_threshold, self.tuned.cls_threshold, self.tuned.min_area, self.tuned.area_cap)
 
 
 @torch.no_grad()
@@ -93,11 +93,14 @@ class ValidationHistograms:
 def _score_validation(acc, config, thresholds):
     if thresholds is None:
         ConsoleProgress.info('Подбор порогов маски, классификации и минимальной площади по AIC')
-        tuned = acc.best(config.eval.mask_thresholds, config.eval.cls_thresholds, config.eval.min_areas)
+        tuned = acc.best(config.eval.mask_thresholds, config.eval.cls_thresholds,
+                         config.eval.min_areas, config.eval.area_caps)
     else:
-        if thresholds.mask_threshold >= 1 or thresholds.mask_threshold * acc.n_bins != int(thresholds.mask_threshold * acc.n_bins):
+        boundary = threshold_bin(thresholds.mask_threshold, acc.n_bins) / acc.n_bins
+        if thresholds.mask_threshold >= 1 or not np.isclose(thresholds.mask_threshold, boundary, rtol=0., atol=1e-12):
             raise ValueError('Frozen mask threshold must match an exact histogram boundary')
-        tuned = acc.evaluate(thresholds.mask_threshold, thresholds.cls_threshold, thresholds.min_area)
+        tuned = acc.evaluate(thresholds.mask_threshold, thresholds.cls_threshold,
+                             thresholds.min_area, thresholds.area_cap)
     ConsoleProgress.info(f'Оценка завершена: {tuned}')
     return tuned, acc.evaluate(.5, .0, .0)
 

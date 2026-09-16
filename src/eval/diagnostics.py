@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from src.training.metric import harmonic_aic
+from src.training.metric import harmonic_aic, operating_bins, threshold_bin
 
 
 class EvaluationReport:
@@ -31,16 +31,22 @@ class EvaluationReport:
     def __init__(self, accumulator, rows, thresholds):
         if len(accumulator) != len(rows):
             raise ValueError('Metric rows do not align with accumulator')
-        if thresholds.mask_threshold >= 1 or thresholds.mask_threshold * accumulator.n_bins != int(thresholds.mask_threshold * accumulator.n_bins):
+        boundary = threshold_bin(thresholds.mask_threshold, accumulator.n_bins) / accumulator.n_bins
+        if thresholds.mask_threshold >= 1 or not np.isclose(thresholds.mask_threshold, boundary, rtol=0., atol=1e-12):
             raise ValueError('Frozen threshold must match histogram boundary')
         self.accumulator, self.rows, self.thresholds = accumulator, rows.reset_index(drop=True), thresholds
 
     def per_image(self):
         p, i, g, n, c = self.accumulator.tables()
-        k = min(int(self.thresholds.mask_threshold * self.accumulator.n_bins), self.accumulator.n_bins - 1)
-        area = p[:, k] / n
-        keep_area = area >= self.thresholds.min_area
-        keep = (c >= self.thresholds.cls_threshold) & keep_area
+        k = threshold_bin(self.thresholds.mask_threshold, self.accumulator.n_bins)
+        bins, blank = operating_bins(p, n, c, k, self.thresholds.cls_threshold,
+                                     self.thresholds.min_area, self.thresholds.area_cap)
+        keep_area = p[:, k] / n >= self.thresholds.min_area
+        pred_no_gate, inter_no_gate = p[:, k] * keep_area, i[:, k] * keep_area
+        indices = np.arange(len(g))
+        pred = np.where(blank, 0.0, p[indices, bins])
+        inter = np.where(blank, 0.0, i[indices, bins])
+        area = pred / n
         frame = self.rows.copy()
         if 'target_kind' not in frame:
             frame['target_kind'] = 'provided'
@@ -49,11 +55,11 @@ class EvaluationReport:
         frame['is_positive'] = g > 0
         frame['gt_fraction'] = g / n
         frame['cls_probability'] = c
-        frame['pred_fraction'] = area * keep
-        frame['dice'] = np.where(g > 0, 2 * i[:, k] * keep / (p[:, k] * keep + g + 1e-6), np.nan)
-        frame['false_positive'] = (g == 0) & (area >= .01) & keep
-        frame['dice_no_gate'] = np.where(g > 0, 2 * i[:, k] * keep_area / (p[:, k] * keep_area + g + 1e-6), np.nan)
-        frame['false_positive_no_gate'] = (g == 0) & (area >= .01) & keep_area
+        frame['pred_fraction'] = area
+        frame['dice'] = np.where(g > 0, 2 * inter / (pred + g + 1e-6), np.nan)
+        frame['false_positive'] = (g == 0) & (area >= .01)
+        frame['dice_no_gate'] = np.where(g > 0, 2 * inter_no_gate / (pred_no_gate + g + 1e-6), np.nan)
+        frame['false_positive_no_gate'] = (g == 0) & (pred_no_gate / n >= .01)
         frame['area_bin'] = pd.cut(frame.gt_fraction, [-1, 0, .01, .05, .15, 1.],
                                     labels=['negative', '(0,1%]', '(1,5%]', '(5,15%]', '(15,100%]'])
         return frame
@@ -77,7 +83,7 @@ class EvaluationReport:
             ('originals', frame.loc[frame.target_kind == 'original_zero']))}
         if self.accumulator.small_mask_weight != 1.0 and frame.is_positive.any() and (~frame.is_positive).any():
             result = self.accumulator.evaluate(self.thresholds.mask_threshold, self.thresholds.cls_threshold,
-                                               self.thresholds.min_area)
+                                               self.thresholds.min_area, self.thresholds.area_cap)
             summary['selection'] = result.as_dict()
         return summary
 

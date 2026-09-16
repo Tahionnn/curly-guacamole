@@ -138,7 +138,7 @@ def test_validate_accumulates_aic_histograms():
     )
     acc = validation.accumulator
     result = validation.tuned
-    assert validation.operating_point == (0.5, 0.5, 0.0)
+    assert validation.operating_point == (0.5, 0.5, 0.0, 0.0)
 
     assert len(acc) == 2
     assert result.n_pos == 1

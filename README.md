@@ -110,6 +110,37 @@ Development validation восстанавливает вероятности д�
 python -m src.inference runs/baseline submissions/baseline
 ```
 
+Постобработка поддерживает `area_cap`: если вероятность изменения кадра ниже
+`cls_threshold`, порог маски повышается до площади **строго меньше** cap.
+При `area_cap=0` такой кадр обнуляется, как прежде. При cap ≤ 0.01 остаток
+маски не считается ложной тревогой, но может сохранить часть Dice позитивного
+кадра. Правило общее для подбора порогов, отчётов и inference.
+
+Переподбор по сохранённым development-гистограммам, без модели и GPU:
+
+```powershell
+python -m src.tools.retune --run runs/baseline --small-mask-weight 1
+```
+
+По умолчанию команда только печатает результат и команду для submission.
+`--small-mask-weight 1` выбирает по официальному AIC; без флага используется
+вес из гистограмм. `--write` атомарно сохраняет `best`, `val_best`, `best_aic`
+и происхождение новой точки в `summary.json`. Файл весов и старые development-
+отчёты не меняются. Inference проверяет хеш checkpoint; holdout дополнительно
+проверяет хеш гистограмм. Запись разрешена после завершения обучения и до
+начала holdout. Подбор по holdout не поддерживается.
+
+Для нового обучения с сеткой cap есть
+`configs/experiments/baseline_capped_gate.yaml`. Обычные конфиги сохраняют
+`eval.area_caps: [0.0]`. `Run.operating_point()` и
+`ValidationResult.operating_point` возвращают четыре значения:
+`(mask_threshold, cls_threshold, min_area, area_cap)`.
+
+Inference принимает `--batch-size`, `--workers` и `--post-workers` (по умолчанию 8;
+0 отключает потоки постобработки). Очереди масок и записи PNG ограничены.
+Явные `--mask-threshold`, `--cls-threshold`, `--min-area` можно дополнить
+`--area-cap` и `--n-bins`; без `--n-bins` сетка берётся из snapshot запуска.
+
 Команда записывает `submission.csv` и одноканальные PNG 0/255 в `predictions/`.
 Перед отправкой упакуйте эти два элемента в ZIP согласно `AIIJC_RULES.md`.
 Holdout — отдельная финальная оценка с замороженными порогами:

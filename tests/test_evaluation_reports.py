@@ -55,7 +55,8 @@ def test_invalid_evaluation_arguments_fail_before_opening_run(tmp_path, batch_si
         CheckpointEvaluator(tmp_path / 'missing', device='cpu', batch_size=batch_size, workers=workers)
 
 
-def test_holdout_pipeline_loads_frozen_checkpoint_and_writes_separate_metrics(tmp_path, monkeypatch):
+@pytest.mark.parametrize('retune', [False, True])
+def test_holdout_pipeline_loads_frozen_checkpoint_and_writes_separate_metrics(tmp_path, monkeypatch, retune):
     from dataclasses import replace
 
     import torch
@@ -88,6 +89,7 @@ def test_holdout_pipeline_loads_frozen_checkpoint_and_writes_separate_metrics(tm
     config = load_experiment_config('configs/baseline.yaml')
     config = replace(config, paths=replace(config.paths, data_path=root.parent),
                      dataset=replace(config.dataset, image_size=16, protocol_path=str(protocol.path)),
+                     eval=replace(config.eval, n_bins=100),
                      train=replace(config.train, device='cpu', amp='off', workers=0))
     snapshot = dict(config.to_flat_dict(), **protocol.provenance())
     run = Run.create(tmp_path, 'run', tensorboard=False)
@@ -97,6 +99,18 @@ def test_holdout_pipeline_loads_frozen_checkpoint_and_writes_separate_metrics(tm
     run.save_state(dict(model=TinyModel().state_dict(), cfg=snapshot, operating_point=point), 'best.pt')
     protocol.rows('train').to_parquet(run.dir / 'training_rows.parquet', index=False)
     protocol.rows('development').to_parquet(run.dir / 'development_rows.parquet', index=False)
+    if retune:
+        from src.tools.retune import RunRetuner
+
+        dev = protocol.rows('development')
+        acc = AICAccumulator(n_bins=100)
+        gt = np.array([np.full((16, 16), not row.is_negative) for row in dev.itertuples()])
+        acc.update(np.full(gt.shape, 1 / (1 + np.exp(10))), gt, np.zeros(len(dev)))
+        acc.save(run.dir / 'oof/val.npz')
+        retuner = RunRetuner(run.dir)
+        result = retuner.sweep([.37], [.5], [0.], [.01])[0]
+        retuner.save(result)
+        point = result.as_dict()
     monkeypatch.setattr('src.eval.checkpoints.build_model', lambda *args, **kwargs: TinyModel())
     monkeypatch.setenv('AIIJC_DATA_PATH', str(tmp_path / 'data'))
     evaluator = CheckpointEvaluator(run.dir, device='cpu', batch_size=2, workers=0)
@@ -106,6 +120,7 @@ def test_holdout_pipeline_loads_frozen_checkpoint_and_writes_separate_metrics(tm
     assert result['provided']['dice_pos'] == 0
     assert (run.dir / 'holdout/per_image.parquet').exists()
     assert run.summary['best'] == point
+    assert evaluator.thresholds.n_bins == 100
     with pytest.raises(FileExistsError):
         evaluator.holdout()
     run.close()

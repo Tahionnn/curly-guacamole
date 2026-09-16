@@ -20,6 +20,7 @@ from src.progress import ConsoleProgress
 from src.training.builders import AmpContext, DataLoaderThreadLimits, build_model
 from src.training.metric import AICAccumulator
 from src.training.runs import Run
+from src.training.selection import RetunedSelection
 from src.training.transfer import BatchTransfer
 from src.training.validation import DeviceHistogramAccumulator
 
@@ -51,8 +52,8 @@ class CheckpointEvaluator:
         self.config = InferenceConfig.from_snapshot(self.run.snapshot)
         self.checkpoint_path = self.run.dir / 'ckpt/best.pt'
         self.checkpoint_digest = file_digest(self.checkpoint_path)
-        best = self.run.summary['best']
-        self.thresholds = ThresholdConfig(**{key: best[key] for key in ('mask_threshold', 'cls_threshold', 'min_area')})
+        self.thresholds = ThresholdConfig.from_summary(self.run.summary, self.run.snapshot)
+        RetunedSelection.verify(self.run.summary, self.run.snapshot, self.checkpoint_path)
 
     def evaluate(self, rows, directory, *, purpose):
         directory = Path(directory)
@@ -85,8 +86,10 @@ class CheckpointEvaluator:
                             pin_memory=self.device.type == 'cuda')
         snapshot = self.run.snapshot
         evaluation = snapshot.get('eval', snapshot)
+        selected_weight = self.run.summary['best'].get('small_mask_weight',
+            evaluation.get('selection_small_mask_weight', evaluation.get('small_mask_weight', 1.0)))
         acc = AICAccumulator(n_bins=int(evaluation.get('n_bins', 256)),
-                             small_mask_weight=evaluation.get('selection_small_mask_weight', evaluation.get('small_mask_weight', 1.0)))
+                             small_mask_weight=selected_weight)
         histograms = DeviceHistogramAccumulator(acc, self.device)
         try:
             with torch.inference_mode():
@@ -114,12 +117,18 @@ class CheckpointEvaluator:
         snapshot = self.run.snapshot
         protocol = EvaluationProtocol.load(snapshot.get('dataset', snapshot)['protocol_path'])
         protocol.verify_run(self.run.snapshot)
-        if not self.run.summary.get('training_complete'):
+        summary = self.run.summary
+        if not summary.get('training_complete'):
             raise ValueError('Complete development training before evaluating holdout')
+        if ThresholdConfig.from_summary(summary, snapshot) != self.thresholds:
+            raise ValueError('Selected thresholds changed after evaluator initialization')
+        retuned = RetunedSelection.verify(summary, snapshot, self.checkpoint_path, check_histograms=True)
         checkpoint = torch.load(self.checkpoint_path, map_location='cpu', weights_only=True)
         protocol.verify_run(checkpoint.get('cfg', {}))
         point = checkpoint.get('operating_point', {})
-        if any(point.get(key) != value for key, value in asdict(self.thresholds).items()):
+        selected = {key: value for key, value in asdict(self.thresholds).items() if key != 'n_bins'}
+        point = dict(point, area_cap=point.get('area_cap', 0.0))
+        if not retuned and any(point.get(key) != value for key, value in selected.items()):
             raise ValueError('Holdout thresholds differ from selected checkpoint operating point')
         del checkpoint
         for name, expected in [('training', self.run.snapshot['training_rows_digest']),

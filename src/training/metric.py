@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
@@ -21,6 +22,15 @@ import numpy as np
 
 EPS = 1e-6
 FP_AREA_THRESHOLD = 0.01  # площадь >= 1% кадра => ложная тревога
+
+
+def threshold_bin(threshold: float, n_bins: int) -> int:
+    """Floor to the histogram grid, preserving boundaries such as 29 / 100."""
+    scaled = float(threshold) * n_bins
+    nearest = round(scaled)
+    if math.isclose(scaled, nearest, rel_tol=0., abs_tol=1e-10):
+        scaled = nearest
+    return min(max(int(scaled), 0), n_bins - 1)
 
 
 def harmonic_aic(dice_pos: float, fpr_neg: float) -> float:
@@ -51,6 +61,7 @@ class AICResult:
     cls_threshold: float = 0.0
     min_area: float = 0.0
     small_mask_weight: float = 1.0
+    area_cap: float = 0.0
 
     def as_dict(self) -> dict:
         return {
@@ -62,15 +73,17 @@ class AICResult:
             "mask_threshold": self.mask_threshold,
             "cls_threshold": self.cls_threshold,
             "min_area": self.min_area,
+            "area_cap": self.area_cap,
             "small_mask_weight": self.small_mask_weight,
         }
 
     def __str__(self) -> str:
         label = 'AIC' if self.small_mask_weight == 1.0 else f'weighted AIC (small={self.small_mask_weight:g})'
+        cap = f" cap={self.area_cap:.4f}" if self.area_cap > 0 else ""
         return (
             f"{label}={self.aic:.4f} (Dice_pos={self.dice_pos:.4f}, FPR_neg={self.fpr_neg:.4f}) "
             f"@ thr={self.mask_threshold:.3f} cls={self.cls_threshold:.3f} "
-            f"min_area={self.min_area:.3f} | pos={self.n_pos} neg={self.n_neg}"
+            f"min_area={self.min_area:.3f}{cap} | pos={self.n_pos} neg={self.n_neg}"
         )
 
 
@@ -109,6 +122,58 @@ def score_masks(
         n_pos=len(dices),
         n_neg=len(false_alarms),
     )
+
+
+def cap_bins(pred_counts: np.ndarray, n_pixels: np.ndarray, area_cap: float) -> np.ndarray:
+    """Нижний бин, на котором площадь предсказания уже меньше `area_cap`.
+
+    Строка — кадр. Если даже верхний бин не укладывается в лимит (скажем, весь
+    кадр предсказан с вероятностью 1), возвращается последний бин, а решение
+    «обнулить» принимает вызывающий код.
+    """
+    area = pred_counts / np.maximum(n_pixels, 1.0)[:, None]
+    under = area < area_cap
+    return np.where(under.any(axis=1), under.argmax(axis=1), pred_counts.shape[1] - 1)
+
+
+def operating_bins(
+    pred_counts: np.ndarray,
+    n_pixels: np.ndarray,
+    cls_prob: np.ndarray,
+    bin_index: int,
+    cls_threshold: float,
+    min_area: float,
+    area_cap: float = 0.0,
+    cap_index: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Бин порога на каждый кадр и флаг «обнулить маску» для одной рабочей точки.
+
+    Единственная реализация правила постобработки: и свип порогов, и по-кадровый
+    отчёт в `eval.diagnostics` читают её. Пока прочтений рабочей точки было два,
+    они однажды разошлись бы — и отбор шёл бы не по той метрике, по которой
+    считается вердикт.
+
+    `area_cap > 0` меняет действие cls-гейта: вместо обнуления кадра порог
+    поднимается ровно настолько, чтобы площадь ушла под `area_cap`. Для FPR это
+    то же самое при cap <= 0.01, но у позитивов, ошибочно
+    попавших под гейт, остаётся ненулевой Dice вместо нуля.
+
+    `cap_index` — уже посчитанный `cap_bins` для этого `area_cap`; он не зависит
+    от перебираемой точки, и свип считает его один раз на сетку.
+    """
+    rows = np.arange(pred_counts.shape[0])
+    bins = np.full(pred_counts.shape[0], int(bin_index), dtype=np.int64)
+    gated = cls_prob < cls_threshold
+    # min_area читается по общему порогу, до поджатия: правило про «слишком
+    # мелкое предсказание» не должно срабатывать от самого поджатия.
+    blank = pred_counts[rows, bins] / np.maximum(n_pixels, 1.0) < min_area
+    if area_cap <= 0.0:
+        return bins, blank | gated
+    if cap_index is None:
+        cap_index = cap_bins(pred_counts, n_pixels, area_cap)
+    bins = np.where(gated, np.maximum(bins, cap_index), bins)
+    capped = pred_counts[rows, bins] / np.maximum(n_pixels, 1.0)
+    return bins, blank | (gated & (capped >= area_cap))
 
 
 @dataclass
@@ -221,11 +286,13 @@ class AICAccumulator:
         mask_threshold: float = 0.5,
         cls_threshold: float = 0.0,
         min_area: float = 0.0,
+        area_cap: float = 0.0,
     ) -> AICResult:
         grid = self.sweep(
             mask_thresholds=[mask_threshold],
             cls_thresholds=[cls_threshold],
             min_areas=[min_area],
+            area_caps=[area_cap],
         )
         return grid[0]
 
@@ -234,13 +301,19 @@ class AICAccumulator:
         mask_thresholds: Sequence[float] | None = None,
         cls_thresholds: Sequence[float] = (0.0,),
         min_areas: Sequence[float] = (0.0,),
+        area_caps: Sequence[float] = (0.0,),
     ) -> list[AICResult]:
         """Перебор сетки постобработки. Возвращает список, отсортированный по AIC убыв.
 
         `cls_threshold` — порог aux-головы: если вероятность «кадр изменён» ниже,
-        маска обнуляется целиком. Это единственный способ снизить FPR_neg,
-        не жертвуя порогом бинаризации.
-        `min_area` — доля кадра: предсказания меньшей площади обнуляются.
+        маска обнуляется целиком.
+        `min_area` — доля кадра: предсказания меньшей площади обнуляются. Заметьте,
+        что при `min_area <= 0.01` FPR не меняется вовсе: ложная тревога считается
+        от 1% кадра, поэтому обнуляются только кадры, которые и так не были
+        ложной тревогой, а Dice позитивов при этом падает.
+        `area_cap` — что делает cls-гейт: при 0 обнуляет кадр, иначе поднимает его
+        порог ровно настолько, чтобы площадь ушла под `area_cap`. Правило считает
+        `operating_bins`, ту же функцию читает inference.
         """
         pred_counts, inter_counts, gt_sum, n_pixels, cls_prob = self.tables()
         is_pos = gt_sum > 0
@@ -250,47 +323,50 @@ class AICAccumulator:
 
         if mask_thresholds is None:
             mask_thresholds = self.thresholds
-        bin_idx = np.clip(
-            (np.asarray(mask_thresholds, dtype=np.float64) * self.n_bins).astype(int),
-            0, self.n_bins - 1,
-        )
+        bin_idx = [threshold_bin(threshold, self.n_bins) for threshold in mask_thresholds]
+
+        rows = np.arange(pred_counts.shape[0])
+        # cap_bins depends only on area_cap, never on the point being swept.
+        cap_index = {float(cap): cap_bins(pred_counts, n_pixels, float(cap))
+                     for cap in area_caps if float(cap) > 0.0}
 
         results: list[AICResult] = []
         for k in bin_idx:
-            pred = pred_counts[:, k].astype(np.float64)
-            inter = inter_counts[:, k].astype(np.float64)
-            area = pred / np.maximum(n_pixels, 1.0)
-
             for cls_thr in cls_thresholds:
-                keep_cls = cls_prob >= cls_thr
                 for min_area in min_areas:
-                    keep = keep_cls & (area >= min_area)
-                    pred_k = np.where(keep, pred, 0.0)
-                    inter_k = np.where(keep, inter, 0.0)
-                    area_k = np.where(keep, area, 0.0)
-
-                    dice = 2.0 * inter_k / (pred_k + gt_sum + EPS)
-                    dice_pos = float(np.average(dice[is_pos], weights=weights)) if is_pos.any() else 0.0
-                    if (~is_pos).any():
-                        fpr_neg = float((area_k[~is_pos] >= FP_AREA_THRESHOLD).mean())
-                    else:
-                        fpr_neg = 0.0
-
-                    results.append(
-                        AICResult(
-                            aic=harmonic_aic(dice_pos, fpr_neg),
-                            dice_pos=dice_pos,
-                            fpr_neg=fpr_neg,
-                            n_pos=int(is_pos.sum()),
-                            n_neg=int((~is_pos).sum()),
-                            # Histograms only resolve boundaries k / n_bins.
-                            # Persist the boundary actually used for inference parity.
-                            mask_threshold=float(k / self.n_bins),
-                            cls_threshold=float(cls_thr),
-                            min_area=float(min_area),
-                            small_mask_weight=self.small_mask_weight,
+                    for area_cap in area_caps:
+                        bins, blank = operating_bins(
+                            pred_counts, n_pixels, cls_prob, k, cls_thr, min_area,
+                            area_cap, cap_index.get(float(area_cap)),
                         )
-                    )
+                        keep = ~blank
+                        pred_k = np.where(keep, pred_counts[rows, bins].astype(np.float64), 0.0)
+                        inter_k = np.where(keep, inter_counts[rows, bins].astype(np.float64), 0.0)
+                        area_k = pred_k / np.maximum(n_pixels, 1.0)
+
+                        dice = 2.0 * inter_k / (pred_k + gt_sum + EPS)
+                        dice_pos = float(np.average(dice[is_pos], weights=weights)) if is_pos.any() else 0.0
+                        if (~is_pos).any():
+                            fpr_neg = float((area_k[~is_pos] >= FP_AREA_THRESHOLD).mean())
+                        else:
+                            fpr_neg = 0.0
+
+                        results.append(
+                            AICResult(
+                                aic=harmonic_aic(dice_pos, fpr_neg),
+                                dice_pos=dice_pos,
+                                fpr_neg=fpr_neg,
+                                n_pos=int(is_pos.sum()),
+                                n_neg=int((~is_pos).sum()),
+                                # Histograms only resolve boundaries k / n_bins.
+                                # Persist the boundary actually used for inference parity.
+                                mask_threshold=float(k / self.n_bins),
+                                cls_threshold=float(cls_thr),
+                                min_area=float(min_area),
+                                area_cap=float(area_cap),
+                                small_mask_weight=self.small_mask_weight,
+                            )
+                        )
 
         results.sort(key=lambda r: r.aic, reverse=True)
         return results
@@ -300,8 +376,9 @@ class AICAccumulator:
         mask_thresholds: Sequence[float] | None = None,
         cls_thresholds: Sequence[float] = (0.0,),
         min_areas: Sequence[float] = (0.0,),
+        area_caps: Sequence[float] = (0.0,),
     ) -> AICResult:
-        return self.sweep(mask_thresholds, cls_thresholds, min_areas)[0]
+        return self.sweep(mask_thresholds, cls_thresholds, min_areas, area_caps)[0]
 
     # --- сохранение / загрузка -----------------------------------------
 
@@ -341,3 +418,5 @@ def _to_numpy(array) -> np.ndarray:
 DEFAULT_MASK_GRID = tuple(np.round(np.arange(0.05, 0.96, 0.025), 4).tolist())
 DEFAULT_CLS_GRID = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
 DEFAULT_AREA_GRID = (0.0, 0.005, 0.01, 0.02, 0.03)
+# Compare several caps; Dice need not improve monotonically as retained area grows.
+DEFAULT_CAP_GRID = (0.0, 0.008, 0.0095, 0.01)

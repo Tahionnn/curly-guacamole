@@ -40,8 +40,20 @@ def test_save_validation_result_preserves_tuned_operating_point(tmp_path):
     run = Run.create(tmp_path, 'validation')
     try:
         run.save_eval(result, pd.DataFrame({'stem': ['positive', 'negative']}))
-        assert run.operating_point() == result.operating_point == (0.75, 0.25, 0.0)
+        assert run.operating_point() == result.operating_point == (0.75, 0.25, 0.0, 0.0)
         assert run.summary['best_aic'] == tuned.aic
         assert len(run.load_eval().acc) == 2
     finally:
         run.close()
+
+
+def test_saved_operating_point_keeps_area_cap(tmp_path):
+    from src.training.runs import Run
+    from src.training.validation import ValidationResult
+
+    acc = AICAccumulator()
+    acc.update(np.full((1, 10, 10), .6), np.ones((1, 10, 10)), np.array([.1]))
+    result = ValidationResult(acc, acc.evaluate(.5, .5, 0., .01))
+    run = Run.create(tmp_path, 'capped', tensorboard=False)
+    run.save_summary({'best': result.tuned.as_dict()})
+    assert run.operating_point() == result.operating_point == (.5, .5, 0., .01)
