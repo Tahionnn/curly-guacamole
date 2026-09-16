@@ -248,14 +248,18 @@ class LossConfig(ConfigSection):
     edge_band: int = 3
     edge_max_pos_weight: float = 50.
     reference_weight: float = 0.
+    boundary_weight: float = 0.
+    boundary_radius: int = 4
 
     def __post_init__(self):
-        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight'):
+        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight', 'boundary_weight'):
             _nonnegative(getattr(self, name), f'loss.{name}')
         if type(self.edge_band) is not int or self.edge_band < 1 or not self.edge_band % 2:
             raise ValueError('loss.edge_band must be a positive odd integer')
         if not math.isfinite(self.edge_max_pos_weight) or self.edge_max_pos_weight < 1:
             raise ValueError('loss.edge_max_pos_weight must be finite and at least 1')
+        if type(self.boundary_radius) is not int or self.boundary_radius < 1:
+            raise ValueError('loss.boundary_radius must be a positive integer')
 
 
 @dataclass(frozen=True)

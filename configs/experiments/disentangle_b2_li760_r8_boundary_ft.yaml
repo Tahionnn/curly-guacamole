@@ -1,0 +1,23 @@
+extends: disentangle_b2_li760_r8_long.yaml
+run_name: disentangle_b2_li760_r8_boundary_ft
+loss:
+  # Extra BCE on the final RGB-grid mask; coarse patch/edge losses are unchanged.
+  boundary_weight: 0.2
+  # Square morphological band: 4 pixels inside/outside, kernel 9x9 at RGB 760.
+  boundary_radius: 4
+train:
+  finetune_from: disentangle_b2_li760_r8_long/ckpt/best.pt
+  finetune_weights: ema
+  epochs: 3
+  full_pass_epochs: 0
+  samples_per_epoch: 24000
+  encoder_lr: 0.00001
+  jpeg_lr: 0.00003
+  head_lr: 0.00003
+  negative_fraction: 0.25
+  plain_nonunit_focus: false
+augmentation:
+  final_full_frame_epochs: 3
+  jpeg_recompression_probability: 0.3
+  jpeg_grid_shift_probability: 0.0
+  jpeg_recompression_quality_range: [60, 100]

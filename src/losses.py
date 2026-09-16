@@ -57,13 +57,36 @@ class LossResult:
     diagnostics: dict[str, tuple[torch.Tensor, torch.Tensor]]
 
 
+class BoundaryBandLoss(torch.nn.Module):
+    """Per-image BCE in a two-sided square band on the final target grid.
+
+    Only band construction binarizes soft targets. Pooling ignores the frame
+    exterior, so uniform masks have no contour and contribute zero. Average
+    over all images, including zero contributions from empty bands.
+    """
+
+    def __init__(self, radius=4):
+        super().__init__()
+        if type(radius) is not int or radius < 1:
+            raise ValueError('boundary_radius must be a positive integer')
+        self.radius = radius
+
+    def forward(self, logits, target):
+        foreground = (target > .5).float()
+        width = 2 * self.radius + 1
+        dilated = F.max_pool2d(foreground, width, stride=1, padding=self.radius)
+        eroded = -F.max_pool2d(-foreground, width, stride=1, padding=self.radius)
+        return bce_loss(logits.float(), target.float(), valid_mask=dilated - eroded)
+
+
 class SegmentationLoss(torch.nn.Module):
     """BCE + all-image Dice, classifier BCE and decoder auxiliary supervision."""
 
     def __init__(self, *, dice_weight=1.0, aux_weight=.4, patch_weight=0., edge_weight=0.,
-                 edge_band=3, edge_max_pos_weight=50., reference_weight=0.):
+                 edge_band=3, edge_max_pos_weight=50., reference_weight=0.,
+                 boundary_weight=0., boundary_radius=4):
         super().__init__()
-        for value in (dice_weight, aux_weight, patch_weight, edge_weight, reference_weight):
+        for value in (dice_weight, aux_weight, patch_weight, edge_weight, reference_weight, boundary_weight):
             if not math.isfinite(value) or value < 0:
                 raise ValueError('Loss weights must be finite and nonnegative')
         if type(edge_band) is not int or edge_band < 1 or not edge_band % 2:
@@ -77,6 +100,8 @@ class SegmentationLoss(torch.nn.Module):
         self.edge_band = edge_band
         self.edge_max_pos_weight = edge_max_pos_weight
         self.reference_weight = reference_weight
+        self.boundary_weight = boundary_weight
+        self.boundary_loss = BoundaryBandLoss(boundary_radius)
 
     @staticmethod
     def _dice(logits, target):
@@ -97,6 +122,8 @@ class SegmentationLoss(torch.nn.Module):
             'dice': self.dice_weight * dice,
             'cls': .3 * bce_loss(out['cls_logits'].float(), labels.float()),
         }
+        if self.boundary_weight > 0:
+            components['boundary_bce'] = self.boundary_weight * self.boundary_loss(out['logits'], target)
         if self.aux_weight > 0 and 'aux_logits' in out:
             logits = out['aux_logits'].float()
             components['aux_bce'] = self.aux_weight * bce_loss(logits, target)

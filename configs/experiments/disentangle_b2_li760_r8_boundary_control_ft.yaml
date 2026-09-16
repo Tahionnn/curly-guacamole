@@ -1,0 +1,4 @@
+extends: disentangle_b2_li760_r8_boundary_ft.yaml
+run_name: disentangle_b2_li760_r8_boundary_control_ft
+loss:
+  boundary_weight: 0.0
