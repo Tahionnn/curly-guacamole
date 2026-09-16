@@ -1,0 +1,20 @@
+extends: disentangle_b2_li760_r8_long.yaml
+run_name: disentangle_b2_li760_r8_jpeg_ft
+train:
+  finetune_from: disentangle_b2_li760_r8_long/ckpt/best.pt
+  finetune_weights: ema
+  plain_nonunit_focus: false
+  epochs: 3
+  full_pass_epochs: 0
+  samples_per_epoch: 24000
+  encoder_lr: 0.00001
+  jpeg_lr: 0.00003
+  head_lr: 0.00003
+  negative_fraction: 0.25
+augmentation:
+  final_full_frame_epochs: 3
+  # 70% unchanged, 25% aligned JPEG, 5% shifted JPEG (unconditional).
+  jpeg_recompression_probability: 0.30
+  jpeg_grid_shift_probability: 0.05
+  # Exclusive upper bound: integer qualities 80 through 95.
+  jpeg_recompression_quality_range: [80, 96]

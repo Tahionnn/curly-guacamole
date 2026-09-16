@@ -34,6 +34,7 @@ class AugmentationPipeline:
                 RandomJPEGRecompression(
                     quality_range=self.config.jpeg_recompression_quality_range,
                     probability=self.config.jpeg_recompression_probability,
+                    grid_shift_probability=self.config.jpeg_grid_shift_probability,
                 )
             ],
             AugmentationStage.AFTER_FORENSICS: [

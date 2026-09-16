@@ -12,10 +12,35 @@ from src.forensic.jpeg_input import JPEGInput
 
 
 class RandomJPEGRecompression(AIIJCAugmentation):
-    def __init__(self, quality_range: tuple[int, int], probability: float) -> None:
+    """Re-encode with an optional grid shift; both probabilities are per sample.
+
+    The quality range follows NumPy's exclusive upper-bound convention.
+    Shifted recompression is a subset of the total recompression probability.
+    """
+
+    def __init__(self, quality_range: tuple[int, int], probability: float,
+                 *, grid_shift_probability: float = 0.0) -> None:
         super().__init__()
+        if not 0.0 <= grid_shift_probability <= probability <= 1.0:
+            raise ValueError("JPEG probabilities must satisfy "
+                             "0 <= grid_shift_probability <= probability <= 1")
         self.quality_range = quality_range
         self.probability = probability
+        self.grid_shift_probability = grid_shift_probability
+
+    @staticmethod
+    def _shift_grid(sample: DataSample, rng: np.random.Generator) -> DataSample:
+        """Crop to a nonzero 8x8 phase, keeping at least one block per axis."""
+        height, width = sample.image.shape[:2]
+        max_top, max_left = min(7, max(0, height - 8)), min(7, max(0, width - 8))
+        phases = (max_top + 1) * (max_left + 1)
+        if phases == 1:
+            return sample
+        top, left = divmod(int(rng.integers(1, phases)), max_left + 1)
+        image = np.ascontiguousarray(sample.image[top:, left:])
+        mask = (None if sample.mask is None
+                else np.ascontiguousarray(sample.mask[top:, left:]))
+        return replace(sample, image=image, mask=mask)
 
     def jpeg_recompression(
             self,
@@ -50,8 +75,12 @@ class RandomJPEGRecompression(AIIJCAugmentation):
             return sample
 
         rng = require_rng(rng, AugmentationStage.BEFORE_FORENSICS)
-        if rng.random() >= self.probability:
+        draw = rng.random()
+        if draw >= self.probability:
             return sample
+
+        if draw < self.grid_shift_probability:
+            sample = self._shift_grid(sample, rng)
 
         if sample.jpeg is not None:
             image, qtable, jpeg = self.jpeg_recompression(
