@@ -74,7 +74,8 @@ def test_invalid_full_train_epochs(value):
         TrainConfig(epochs=5, full_pass_epochs=value)
 
 
-def test_partial_accumulation_keeps_update_scale():
+@pytest.mark.parametrize('foreach', [False, True])
+def test_partial_accumulation_keeps_update_scale(foreach):
     from src.training.builders import build_amp
     from src.training.engine import train_one_epoch
     from tests.test_engine import CountingEma, CountingScheduler, _cpu_config
@@ -90,7 +91,8 @@ def test_partial_accumulation_keeps_update_scale():
 
     results = []
     for accum in (1, 4):
-        cfg = _cpu_config(grad_accum_steps=accum, full_pass_epochs=1)
+        cfg = _cpu_config(grad_accum_steps=accum, full_pass_epochs=1,
+                          foreach_grad_normalization=foreach)
         model = Model()
         amp = build_amp(cfg.train)
         batch = {'image': torch.zeros(1, 3, 2, 2), 'mask': torch.ones(1, 1, 2, 2),

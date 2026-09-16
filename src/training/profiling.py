@@ -189,9 +189,15 @@ def main():
     parser.add_argument('--repeats', type=int, default=2, help='Passes for the worker comparison')
     parser.add_argument('--compare-transfer', action='store_true', help='Compare synchronous and asynchronous CUDA transfers')
     parser.add_argument('--profile-data', action='store_true', help='Measure worker preprocessing stages on consumed batches')
+    parser.add_argument('--jpeg-triton-backward', action='store_true', help='Benchmark tiled categorical weight gradients')
+    parser.add_argument('--foreach-grad-normalization', action='store_true', help='Benchmark grouped gradient normalization')
     parser.add_argument('--output', default='profiles/baseline.json')
     args = parser.parse_args()
     config = load_experiment_config(args.config)
+    if args.jpeg_triton_backward:
+        config = replace(config, model=replace(config.model, jpeg_triton_backward=True))
+    if args.foreach_grad_normalization:
+        config = replace(config, train=replace(config.train, foreach_grad_normalization=True))
     if args.profile_data and (args.compare_transfer or args.workers is not None):
         parser.error('--profile-data runs one configuration; set workers through AIIJC_WORKERS')
     if args.compare_transfer and args.workers is not None:

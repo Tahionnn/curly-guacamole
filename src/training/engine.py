@@ -33,6 +33,7 @@ from src.training.distributed import TrainingRuntime
 from src.training.metric import AICResult
 from src.training.runs import Run
 from src.training.sampling import DistributedBatchSampler
+from src.training.gradients import GradientNormalizer
 from src.training.transfer import BatchTransfer
 from src.training.validation import validate
 
@@ -583,9 +584,8 @@ def train_one_epoch(
                 scaler.unscale_(optimizer)
             if config.train.full_pass_epochs or runtime.distributed:
                 divisor = runtime.sum(accumulation_samples) / runtime.world_size
-                for parameter in model.parameters():
-                    if parameter.grad is not None:
-                        parameter.grad.div_(divisor)
+                GradientNormalizer.divide(model.parameters(), divisor,
+                                          foreach=config.train.foreach_grad_normalization)
                 accumulation_samples = 0
             if config.train.grad_clip:
                 nn.utils.clip_grad_norm_(model.parameters(), config.train.grad_clip)

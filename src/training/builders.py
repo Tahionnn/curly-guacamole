@@ -80,6 +80,7 @@ def build_model(config: ModelConfig, *, aux_weight: float = .4, pretrained: bool
                       bifpn_width=config.bifpn_width, bifpn_repeats=config.bifpn_repeats,
                       pristine_reference=config.pristine_reference)
     model.forensic_fusion.branch.artifact.dc_layer0_dil[0].specialize_width = config.jpeg_specialize_width
+    model.forensic_fusion.branch.artifact.dc_layer0_dil[0].triton_backward = config.jpeg_triton_backward
     model.forensic_fusion.branch.artifact.dc_layer1_tail[0].use_matmul = config.jpeg_pointwise_matmul
     if pretrained and config.jpeg_pretrained is not None:
         path = Path(config.jpeg_pretrained)

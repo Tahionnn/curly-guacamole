@@ -64,6 +64,7 @@ class ModelConfig(ConfigSection):
     jpeg_pretrained: str | None = 'DCT_djpeg.pth'
     jpeg_specialize_width: bool = True
     jpeg_pointwise_matmul: bool = True
+    jpeg_triton_backward: bool = False
     jpeg_similarity: bool = False
     disentangle_levels: tuple[int, ...] = ()
     disentangle_mode: str = 'fuse'
@@ -79,6 +80,8 @@ class ModelConfig(ConfigSection):
 
     def __post_init__(self):
         _non_empty_str(self.encoder, 'model.encoder')
+        if type(self.jpeg_triton_backward) is not bool:
+            raise ValueError('model.jpeg_triton_backward must be a boolean')
         if type(self.pristine_reference) is not bool:
             raise ValueError('model.pristine_reference must be a boolean')
         if type(self.bifpn_width) is not int or self.bifpn_width < 1:
@@ -158,6 +161,7 @@ class TrainConfig(ConfigSection):
     epochs: int = 6
     samples_per_epoch: int = 24000
     full_pass_epochs: int = 0
+    foreach_grad_normalization: bool = False
     train_all_data: bool = False
     negative_fraction: float = .25
     batch_size: int = 4
@@ -178,6 +182,8 @@ class TrainConfig(ConfigSection):
         self.validate()
 
     def validate(self):
+        if type(self.foreach_grad_normalization) is not bool:
+            raise ValueError('foreach_grad_normalization must be boolean')
         if type(self.train_all_data) is not bool:
             raise ValueError('train_all_data must be boolean')
         if self.train_all_data and (self.full_pass_epochs != self.epochs or self.plain_nonunit_focus):
