@@ -120,7 +120,7 @@ class ExperimentRunner:
         plain_config = cfg.to_flat_dict()
         plain_config['world_size'] = runtime.world_size
         protocol = EvaluationProtocol.load(cfg.dataset.protocol_path)
-        plain_config.update(protocol.provenance())
+        plain_config.update(protocol.provenance(train_all_data=True) if cfg.train.train_all_data else protocol.provenance())
         run = None
 
         def prepare_run():
@@ -128,7 +128,9 @@ class ExperimentRunner:
             run = Run.create(cfg.paths.runs_path, cfg.run_name, resume=cfg.train.resume)
             train_df.to_parquet(run.dir / 'training_rows.parquet', index=False)
             val_df.to_parquet(run.dir / 'development_rows.parquet', index=False)
-            run.save_summary({'evaluation_role': 'development', 'protocol_digest': protocol.digest,
+            run.save_summary({'evaluation_role': 'none' if cfg.train.train_all_data else 'development',
+                              'independent_holdout_available': not cfg.train.train_all_data,
+                              'protocol_digest': protocol.digest,
                               'holdout_evaluated': False, 'training_complete': False})
             run.save_snapshot(self._snapshot(plain_config, gflops))
             run.info(f"{cfg.run_name}, {gflops} GFLOPS; GPUs={runtime.world_size}, "
@@ -179,7 +181,7 @@ class ExperimentRunner:
                 else:
                     if runtime.is_main:
                         run.info(f"Полные кадры: p={train_ds.augmentations.full_frame_probability:.2f}; "
-                             "валидация: original")
+                             f"валидация: {'disabled' if cfg.train.train_all_data else 'original'}")
                         run.info(f"Эпоха {epoch + 1}/{cfg.train.epochs}: обучение; "
                                  f"optimizer steps={steps_per_epoch}")
                     train_result = train_one_epoch(
@@ -200,8 +202,20 @@ class ExperimentRunner:
                     # Commit training before any post-training output or validation.
                     self._checkpoint(
                         run, model, ema, optimizer, scheduler, scaler, epoch, state, plain_config,
-                        validation_complete=False,
+                        validation_complete=cfg.train.train_all_data,
                     )
+                if cfg.train.train_all_data:
+                    state.pending_train_result = None
+                    runtime.main_call(run.log, epoch, {
+                        'train/loss': train_result.loss,
+                        'train/seen': train_result.seen,
+                        'samples': state.seen_total,
+                        'train/skipped_steps': train_result.skipped_steps,
+                        **{f'train/loss_{key}': value for key, value in train_result.loss_components.items()},
+                    })
+                    if runtime.is_main:
+                        run.info(f'Эпоха {epoch + 1}: loss={train_result.loss:.5f}; валидация отключена')
+                    continue
                 if runtime.is_main:
                     run.info(f"Обучение завершено: loss={train_result.loss:.5f}, примеров={train_result.seen}; валидация EMA")
                 validation = validate(ema.module, val_loader, self.amp, cfg, self.device, runtime=runtime)
@@ -226,7 +240,8 @@ class ExperimentRunner:
 
             runtime.main_call(self._save_final_summary, run, state, gflops)
             if runtime.is_main:
-                run.info(f"Эксперимент завершён: лучший AIC={state.best_aic:.4f}; результаты в {run.dir.resolve()}")
+                result = 'без валидации' if cfg.train.train_all_data else f'лучший AIC={state.best_aic:.4f}'
+                run.info(f"Эксперимент завершён: {result}; результаты в {run.dir.resolve()}")
             return run
         finally:
             if runtime.is_main:
@@ -345,11 +360,18 @@ class ExperimentRunner:
             raise ValueError('Cannot resume with different evaluation settings; choose a new run_name')
         if previous.seed != cfg.seed:
             raise ValueError('Cannot resume with a different seed; choose a new run_name')
-        EvaluationProtocol.load(cfg.dataset.protocol_path).verify_run(snapshot)
+        protocol = EvaluationProtocol.load(cfg.dataset.protocol_path)
+        if cfg.train.train_all_data:
+            protocol.verify_run(snapshot, train_all_data=True)
+        else:
+            protocol.verify_run(snapshot)
 
     def _split_data(self):
         cfg = self.config
         protocol = EvaluationProtocol.load(cfg.dataset.protocol_path)
+        if cfg.train.train_all_data:
+            rows = protocol.all_training_rows()
+            return rows, rows.iloc[:0].copy()
         development = EvaluationReport.add_jpeg_metadata(protocol.rows('development'),
                                                          self.data_workspace.train_root, cfg.train.workers)
         train = protocol.rows('train')
@@ -473,6 +495,11 @@ class ExperimentRunner:
             run.info("  ВНИМАНИЕ: пропущено >5% шагов - переполнения fp16, ставь amp='bf16'")
 
     def _save_final_summary(self, run: Run, state: TrainingState, gflops: float) -> None:
+        if self.config.train.train_all_data:
+            run.save_summary({'samples': state.seen_total, 'training_complete': True,
+                              'evaluation_role': 'none', 'independent_holdout_available': False,
+                              'final_checkpoint': 'ckpt/last.pt'})
+            return
         run.save_summary(
             {
                 "best_aic": state.best_aic,

@@ -1,0 +1,13 @@
+extends: disentangle_b2_li760_r8_long.yaml
+run_name: disentangle_b2_li760_r8_all_data_ft
+train:
+  finetune_from: disentangle_b2_li760_r8_long/ckpt/best.pt
+  finetune_weights: ema
+  train_all_data: true
+  epochs: 3
+  full_pass_epochs: 3
+  encoder_lr: 0.00001
+  jpeg_lr: 0.00003
+  head_lr: 0.00003
+augmentation:
+  final_full_frame_epochs: 3

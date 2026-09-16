@@ -158,6 +158,7 @@ class TrainConfig(ConfigSection):
     epochs: int = 6
     samples_per_epoch: int = 24000
     full_pass_epochs: int = 0
+    train_all_data: bool = False
     negative_fraction: float = .25
     batch_size: int = 4
     grad_accum_steps: int = 4
@@ -177,6 +178,10 @@ class TrainConfig(ConfigSection):
         self.validate()
 
     def validate(self):
+        if type(self.train_all_data) is not bool:
+            raise ValueError('train_all_data must be boolean')
+        if self.train_all_data and (self.full_pass_epochs != self.epochs or self.plain_nonunit_focus):
+            raise ValueError('train_all_data requires all epochs to be full passes and no domain focus')
         if type(self.plain_nonunit_focus) is not bool:
             raise ValueError('plain_nonunit_focus must be boolean')
         if self.devices != 'auto':

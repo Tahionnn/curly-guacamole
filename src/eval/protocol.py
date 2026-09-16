@@ -128,13 +128,17 @@ class EvaluationProtocol:
             frames.append(self.originals.loc[self.originals.role == role])
         return pd.concat(frames, ignore_index=True)
 
-    def provenance(self) -> dict:
+    def all_training_rows(self) -> pd.DataFrame:
+        """All supplied labeled data, including development and holdout originals."""
+        return pd.concat([self.rows(role) for role in self.ROLES], ignore_index=True)
+
+    def provenance(self, *, train_all_data=False) -> dict:
         return dict(protocol_digest=self.digest, training_originals=True,
-                    training_rows_digest=rows_digest(self.rows('train')),
+                    training_rows_digest=rows_digest(self.all_training_rows() if train_all_data else self.rows('train')),
                     development_rows_digest=rows_digest(self.rows('development')))
 
-    def verify_run(self, snapshot: dict) -> None:
-        expected = self.provenance()
+    def verify_run(self, snapshot: dict, *, train_all_data=False) -> None:
+        expected = self.provenance(train_all_data=train_all_data)
         for key, value in expected.items():
             if snapshot.get(key) != value:
                 raise ValueError(f'Run {key} does not match protocol; historical training cannot claim independent holdout')
