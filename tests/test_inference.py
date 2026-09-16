@@ -44,7 +44,8 @@ def test_template_alignment_and_prediction_completeness(tmp_path):
     assert not (tmp_path / "submission.csv").exists()
 
 
-def test_run_submission_prefers_ema_preserves_template_and_sizes(tmp_path, monkeypatch):
+@pytest.mark.parametrize('checkpoint_name', ['best.pt', 'last.pt'])
+def test_run_submission_prefers_ema_preserves_template_and_sizes(tmp_path, monkeypatch, checkpoint_name):
     import src.inference.submission as module
     from src.training.runs import Run
 
@@ -55,7 +56,7 @@ def test_run_submission_prefers_ema_preserves_template_and_sizes(tmp_path, monke
     run.save_snapshot(snapshot)
     run.save_summary({"best": {"mask_threshold": 0.5, "cls_threshold": 0.0, "min_area": 0.0}})
     torch.save({"model": {"bias": torch.tensor(-10.)}, "ema": {"bias": torch.tensor(10.)}},
-               run.dir / "ckpt" / "best.pt")
+               run.dir / "ckpt" / checkpoint_name)
     test_root = tmp_path / "data" / "test_stage1" / "test_stage1"
     test_root.mkdir(parents=True)
     pd.DataFrame({"img_path": ["a.jpg", "b.jpg"]}).to_csv(test_root / "test.csv", index=False)
@@ -90,7 +91,8 @@ def test_run_submission_prefers_ema_preserves_template_and_sizes(tmp_path, monke
 
     monkeypatch.setattr(module, "AIIJCDataset", DummyDataset)
     monkeypatch.setattr(module, "build_model", model_factory)
-    csv = create_submission(run.dir, tmp_path / "output", data_path=tmp_path / "data")
+    csv = create_submission(run.dir, tmp_path / "output", data_path=tmp_path / "data",
+                            checkpoint_name=checkpoint_name)
     pd.testing.assert_frame_equal(pd.read_csv(csv), template)
     for path, size in [("predictions/a.png", (5, 3)), ("predictions/sub/b.png", (4, 7))]:
         with Image.open(csv.parent / path) as mask:
@@ -102,6 +104,7 @@ def test_run_submission_prefers_ema_preserves_template_and_sizes(tmp_path, monke
     with pytest.raises(ValueError, match="operating point"):
         create_submission(run.dir, tmp_path / "no_summary", data_path=tmp_path / "data")
     create_submission(run.dir, tmp_path / "explicit", data_path=tmp_path / "data",
+                      checkpoint_name=checkpoint_name,
                       thresholds=ThresholdConfig(1.0))
 
 

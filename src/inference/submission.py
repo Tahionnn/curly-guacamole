@@ -101,8 +101,11 @@ def create_submission(
     data_path: str | Path | None = None,
     template_path: str | Path | None = None,
     device: str | None = None,
+    checkpoint_name: str = 'best.pt',
 ) -> Path:
-    """Load ckpt/best.pt (EMA preferred) and write the template-aligned submission."""
+    """Load the selected checkpoint (EMA preferred) and write the submission."""
+    if checkpoint_name not in {'best.pt', 'last.pt'}:
+        raise ValueError('checkpoint_name must be best.pt or last.pt')
     ConsoleProgress.info(f"Submission: загрузка конфигурации запуска {run_dir}")
     run = Run.open(run_dir)
     config = InferenceConfig.from_snapshot(run.snapshot)
@@ -129,7 +132,7 @@ def create_submission(
     )
     amp = AmpContext(inference_device, torch.bfloat16 if config.amp == "bf16" else torch.float16,
                      inference_device.type == "cuda" and config.amp != "off", False)
-    checkpoint_path = run.dir / "ckpt" / "best.pt"
+    checkpoint_path = run.dir / "ckpt" / checkpoint_name
     ConsoleProgress.info(f"Submission: загрузка checkpoint {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     weights = "ema" if checkpoint.get("ema") is not None else "model"

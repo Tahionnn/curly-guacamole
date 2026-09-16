@@ -11,6 +11,8 @@ def main() -> None:
     parser.add_argument("--data-path")
     parser.add_argument("--template-path")
     parser.add_argument("--device")
+    parser.add_argument("--checkpoint", choices=('best.pt', 'last.pt'), default='best.pt',
+                        help='Checkpoint in run_dir/ckpt; use last.pt for blind finetuning')
     parser.add_argument("--mask-threshold", type=float)
     parser.add_argument("--cls-threshold", type=float)
     parser.add_argument("--min-area", type=float)
@@ -20,7 +22,8 @@ def main() -> None:
         parser.error("provide all three thresholds, or omit them to use the run summary")
     thresholds = ThresholdConfig(*values) if values[0] is not None else None
     path = create_submission(args.run_dir, args.output_dir, thresholds=thresholds,
-                             data_path=args.data_path, template_path=args.template_path, device=args.device)
+                             data_path=args.data_path, template_path=args.template_path, device=args.device,
+                             checkpoint_name=args.checkpoint)
     print(path)
 
 
