@@ -155,8 +155,6 @@ def create_submission(
     )
     amp = AmpContext(inference_device, torch.bfloat16 if config.amp == "bf16" else torch.float16,
                      inference_device.type == "cuda" and config.amp != "off", False)
-    if inference_device.type == 'cuda':
-        torch.backends.cudnn.benchmark = True
     checkpoint_path = run.dir / "ckpt" / checkpoint_name
     ConsoleProgress.info(f"Submission: загрузка checkpoint {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)

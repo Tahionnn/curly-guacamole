@@ -84,8 +84,9 @@ class Predictor:
         self.model.eval()
         pending: deque = deque()
         for batch in loader:
-            # Leave inference/autocast contexts before yielding to caller code.
-            with torch.inference_mode(), self.amp.autocast():
+            # Native JPEG shapes vary: autotuning would search again for new sizes.
+            # Restore caller flags and leave inference/autocast before yielding.
+            with torch.inference_mode(), torch.backends.cudnn.flags(benchmark=False), self.amp.autocast():
                 kwargs = {'jpeg': BatchTransfer.move_jpeg(batch['jpeg'], self.amp.device)} if 'jpeg' in batch else {}
                 # Same transfer as src.training.validation: the thresholds were
                 # tuned on the kernels channels_last selects.
@@ -125,12 +126,14 @@ class Predictor:
         if blank:
             mask = np.zeros(probabilities.shape, dtype=bool)
         else:
-            # Multiplication by a non-power-of-two can round across a boundary.
-            # Match histogram quantization rather than a different float comparison.
-            n_bins = self.thresholds.n_bins
-            mask = (probabilities * n_bins >= bins if n_bins & (n_bins - 1)
-                    else probabilities >= bins / n_bins)
+            mask = self._mask_at_bin(probabilities, bins)
         return mask.astype(np.uint8) * 255
+
+    def _mask_at_bin(self, probabilities: np.ndarray, bins: int) -> np.ndarray:
+        # Match histogram quantization, including non-power-of-two rounding.
+        n_bins = self.thresholds.n_bins
+        return (probabilities * n_bins >= bins if n_bins & (n_bins - 1)
+                else probabilities >= bins / n_bins)
 
     def binary_mask(
         self, probability: torch.Tensor, cls_probability: float, size: tuple[int, int],
@@ -147,6 +150,14 @@ class Predictor:
         """
         n_bins, start = self.thresholds.n_bins, self.thresholds.bin_index
         size = probabilities.size
+        gated = cls_probability < self.thresholds.cls_threshold
+        if gated and self.thresholds.area_cap == 0:
+            return start, True
+        if not gated:
+            if self.thresholds.min_area == 0:
+                return start, False
+            area = np.count_nonzero(self._mask_at_bin(probabilities, start)) / max(size, 1)
+            return start, area < self.thresholds.min_area
         # Only bins at or above bin_index can change the answer: operating_bins
         # takes max(bin_index, cap_index), so a cap satisfied lower down still
         # resolves to bin_index. Histogramming the suprathreshold pixels alone

@@ -129,3 +129,41 @@ def test_report_and_frozen_validation_reproduce_capped_masks():
         tuned, _ = _score_validation(acc, config, frozen)
         assert tuned.area_cap == .01
         assert tuned.aic == pytest.approx(summary['selection']['aic'])
+
+
+@pytest.mark.parametrize('cls_threshold,min_area,cap,cls_probability,blank', [
+    (0., 0., 0., .1, False),
+    (.5, 0., 0., .1, True),
+    (.5, 0., 0., .8, False),
+    (.5, .5, .01, .8, False),
+    (.5, .6, .01, .8, True),
+])
+def test_inactive_cap_skips_histogram_but_preserves_classifier_and_area_rules(
+        monkeypatch, cls_threshold, min_area, cap, cls_probability, blank):
+    predictor = Predictor(torch.nn.Identity(), ThresholdConfig(.5, cls_threshold, min_area, cap),
+                          AmpContext(torch.device('cpu'), torch.float32, False, False))
+
+    def histogram_was_not_needed(*args, **kwargs):
+        pytest.fail('A frame without adaptive capping must not build a histogram')
+
+    monkeypatch.setattr(np, 'bincount', histogram_was_not_needed)
+    result = predictor.mask_from_probabilities(np.array([[.1, .6], [.7, .4]]), cls_probability)
+    expected = np.zeros((2, 2), np.uint8) if blank else np.array([[0, 255], [255, 0]], np.uint8)
+    np.testing.assert_array_equal(result, expected)
+
+
+def test_predict_disables_shape_autotuning_only_inside_forward():
+    class Model(torch.nn.Module):
+        def forward(self, image):
+            assert not torch.backends.cudnn.benchmark
+            return {'logits': image[:, :1], 'cls_logits': torch.zeros(len(image), 1)}
+
+    predictor = Predictor(Model(), ThresholdConfig(), AmpContext(torch.device('cpu'), torch.float32, False, False))
+    batch = dict(image=torch.ones(1, 3, 2, 2), image_path=['a'], original_size=[(3, 4)])
+    with torch.backends.cudnn.flags(benchmark=True):
+        predictions = predictor.predict([batch])
+        first = next(predictions)
+        assert first.mask.shape == (3, 4)
+        assert torch.backends.cudnn.benchmark
+        assert list(predictions) == []
+        assert torch.backends.cudnn.benchmark
