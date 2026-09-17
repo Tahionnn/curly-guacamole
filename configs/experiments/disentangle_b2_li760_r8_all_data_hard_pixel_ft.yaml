@@ -1,7 +1,13 @@
 # Continue the completed three-epoch all-data finetune from its epoch-3 EMA.
 extends: disentangle_b2_li760_r8_all_data_ft.yaml
 run_name: disentangle_b2_li760_r8_all_data_hard_pixel_ft
+model:
+  # Variable native JPEG sizes: reuse the kernel instead of compiling each width.
+  jpeg_specialize_width: false
+  # Avoid reconstructing a full-resolution 21-channel one-hot in backward.
+  jpeg_triton_backward: true
 train:
+  foreach_grad_normalization: true
   finetune_from: disentangle_b2_li760_r8_all_data_ft_ep3/ckpt/last.pt
   finetune_weights: ema
   resume: true

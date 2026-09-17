@@ -355,11 +355,14 @@ class ExperimentRunner:
         saved = previous.to_dict()
         for section in ('model', 'dataset', 'loss', 'augmentation'):
             for key, value in current[section].items():
+                # Execution kernels preserve parameter/state shapes and the recipe.
+                if section == 'model' and key in {'jpeg_specialize_width', 'jpeg_triton_backward'}:
+                    continue
                 if saved[section][key] != value:
                     raise ValueError(f'Cannot resume with a different {section}.{key}; choose a new run_name')
         # Optimizer/scheduler state is meaningful only for the same training recipe.
         runtime_fields = {'device', 'devices', 'distributed_backend', 'workers', 'resume',
-                          'finetune_from', 'finetune_weights'}
+                          'finetune_from', 'finetune_weights', 'foreach_grad_normalization'}
         for key, value in current['train'].items():
             if key not in runtime_fields and saved['train'][key] != value:
                 raise ValueError(f'Cannot resume with a different train.{key}; choose a new run_name')

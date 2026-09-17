@@ -137,6 +137,7 @@ def benchmark(config, *, batches=32, warmup=8, asynchronous_transfer=True, profi
         optimizer = build_optimizer(config.train, model)
         ema = build_ema(config.train, model)
         profiler = StageProfiler(runner.device, warmup)
+        torch.cuda.reset_peak_memory_stats(runner.device)
         ConsoleProgress.info(f'Profile {mode}: warmup={warmup}, measured={batches}')
         train_one_epoch(model=model, loader=source, optimizer=optimizer,
                         scheduler=build_scheduler(config.train, optimizer, total,
@@ -145,6 +146,8 @@ def benchmark(config, *, batches=32, warmup=8, asynchronous_transfer=True, profi
                         config=config, device=runner.device, profiler=profiler,
                         asynchronous_transfer=asynchronous_transfer and mode == 'loader')
         results[mode] = profiler.report()
+        results[mode]['peak_allocated_gib'] = torch.cuda.max_memory_allocated(runner.device) / 2**30
+        results[mode]['peak_reserved_gib'] = torch.cuda.max_memory_reserved(runner.device) / 2**30
         if mode == 'loader' and worker_profile is not None:
             results[mode]['worker_profile'] = worker_profile.report()
         ConsoleProgress.info(json.dumps(results[mode], ensure_ascii=False))
@@ -191,9 +194,17 @@ def main():
     parser.add_argument('--profile-data', action='store_true', help='Measure worker preprocessing stages on consumed batches')
     parser.add_argument('--jpeg-triton-backward', action='store_true', help='Benchmark tiled categorical weight gradients')
     parser.add_argument('--foreach-grad-normalization', action='store_true', help='Benchmark grouped gradient normalization')
+    parser.add_argument('--reference-kernels', action='store_true',
+                        help='Use original JPEG backward/width specialization and scalar gradient division for A/B')
     parser.add_argument('--output', default='profiles/baseline.json')
     args = parser.parse_args()
     config = load_experiment_config(args.config)
+    if args.reference_kernels:
+        if args.jpeg_triton_backward or args.foreach_grad_normalization:
+            parser.error('--reference-kernels cannot be combined with optimized kernel flags')
+        config = replace(config,
+                         model=replace(config.model, jpeg_triton_backward=False, jpeg_specialize_width=True),
+                         train=replace(config.train, foreach_grad_normalization=False))
     if args.jpeg_triton_backward:
         config = replace(config, model=replace(config.model, jpeg_triton_backward=True))
     if args.foreach_grad_normalization:

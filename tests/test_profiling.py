@@ -98,3 +98,29 @@ def test_compare_transfer_cli_runs_all_variants_and_saves_report(tmp_path, monke
     profiling.main()
     assert called == [(mode, 64, 8) for mode in (False, True)]
     assert list(json.loads(output.read_text())) == ['synchronous', 'asynchronous']
+
+
+def test_reference_cli_benchmarks_original_kernels_without_changing_recipe(tmp_path, monkeypatch):
+    from src.config import load_experiment_config
+    from src.training import profiling
+
+    path = 'configs/experiments/disentangle_b2_li760_r8_all_data_hard_pixel_ft.yaml'
+    original = load_experiment_config(path)
+    called = []
+
+    def benchmark(config, **kwargs):
+        called.append(config)
+        return {}
+
+    monkeypatch.setattr(profiling, 'benchmark', benchmark)
+    monkeypatch.setattr('sys.argv', ['profiling', '--config', path, '--reference-kernels',
+                                    '--output', str(tmp_path / 'reference.json')])
+    profiling.main()
+    assert len(called) == 1
+    reference = called[0]
+    assert not reference.model.jpeg_triton_backward
+    assert reference.model.jpeg_specialize_width
+    assert not reference.train.foreach_grad_normalization
+    assert reference.loss == original.loss
+    assert reference.train.batch_size == original.train.batch_size
+    assert reference.train.grad_accum_steps == original.train.grad_accum_steps
