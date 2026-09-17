@@ -1,6 +1,0 @@
-# Match B2 640 compute at native JPEG 1080x1920, RGB sizes in steps of 8.
-# B2 640: 92.961 GFLOPs; B2-Li 736: 92.508; B2-Li 744: 95.938.
-extends: disentangle_b2_li640_cross32.yaml
-run_name: disentangle_b2_li736_cross32
-dataset:
-  image_size: 736

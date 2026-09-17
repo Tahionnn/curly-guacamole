@@ -1,6 +1,0 @@
-extends: disentangle_b2_li704_bifpn_w64_r2.yaml
-run_name: disentangle_b2_li704_bifpn_w64_r2_cross32
-model:
-  disentangle_cross_strides: [32]
-dataset:
-  image_size: 752
