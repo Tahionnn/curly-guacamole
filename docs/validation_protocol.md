@@ -8,8 +8,8 @@ Manifest не генерируется заново при запуске мод
 
 Выберите любой текущий конфиг, например:
 
-```powershell
-& 'D:/Apps/anaconda3/envs/challenges/python.exe' -m src.training --config configs/baseline.yaml
+```bash
+python -m src.training --config configs/baseline.yaml
 ```
 
 Development выбирает checkpoint и пороги по combined AIC. Вероятности восстанавливаются до исходного размера до порога; GT оценивается в исходном разрешении. Provided и originals записываются отдельно в `development/metrics.json`, `per_image.parquet`, `slices.csv`. Для групп без positive Dice/AIC равны null; FPR остаётся определённым.
@@ -35,8 +35,8 @@ eval:
 
 После выбора единственного кандидата:
 
-```powershell
-& 'D:/Apps/anaconda3/envs/challenges/python.exe' -m src.eval --run runs/positive_dice
+```bash
+python -m src.eval --run runs/positive_dice
 ```
 
 Протокол читается из snapshot. Evaluator проверяет завершение обучения, provenance, контрольные суммы checkpoint, фактические строки train/development и сохранённую рабочую точку. Holdout не подбирает пороги.
