@@ -56,3 +56,26 @@ def test_finetune_loads_model_weights_unless_resuming(tmp_path, monkeypatch, res
     actual = ExperimentRunner(cfg)._build_training_model()
     assert calls == [False]
     assert actual.weight.item() == (0. if resume_exists else 9. if weights == 'ema' else 7.)
+
+
+@pytest.mark.parametrize('destination_all_data', [False, True])
+def test_all_data_source_requires_all_data_destination(tmp_path, destination_all_data):
+    from src.eval.protocol import EvaluationProtocol
+    cfg = load_experiment_config('configs/baseline.yaml')
+    cfg = replace(cfg, paths=replace(cfg.paths, runs_path=tmp_path),
+                  augmentation=replace(cfg.augmentation, final_full_frame_epochs=3),
+                  train=replace(cfg.train, epochs=3, full_pass_epochs=3, train_all_data=True,
+                                finetune_from='source/ckpt/last.pt', finetune_weights='ema'))
+    snapshot = {**cfg.to_flat_dict(),
+                **EvaluationProtocol.load(cfg.dataset.protocol_path).provenance(train_all_data=True)}
+    path = tmp_path / cfg.train.finetune_from
+    path.parent.mkdir(parents=True)
+    torch.save({'ema': {'weight': torch.tensor([[9.]])}, 'cfg': snapshot}, path)
+    destination = replace(cfg, train=replace(cfg.train, train_all_data=destination_all_data))
+    model = torch.nn.Linear(1, 1, bias=False)
+    if destination_all_data:
+        ExperimentRunner(destination)._load_finetune_weights(model)
+        assert model.weight.item() == 9.
+    else:
+        with pytest.raises(ValueError, match='all-data'):
+            ExperimentRunner(destination)._load_finetune_weights(model)

@@ -168,6 +168,7 @@ class TrainConfig(ConfigSection):
     grad_accum_steps: int = 4
     warmup_fraction: float = .05
     min_lr_factor: float = .02
+    scheduler: str = 'cosine'
     amp: str = 'bf16'
     ema_decay: float = .999
     grad_clip: float = 1.0
@@ -182,6 +183,8 @@ class TrainConfig(ConfigSection):
         self.validate()
 
     def validate(self):
+        if self.scheduler not in {'cosine', 'none'}:
+            raise ValueError('train.scheduler must be cosine or none')
         if type(self.foreach_grad_normalization) is not bool:
             raise ValueError('foreach_grad_normalization must be boolean')
         if type(self.train_all_data) is not bool:
@@ -262,10 +265,17 @@ class LossConfig(ConfigSection):
     reference_weight: float = 0.
     boundary_weight: float = 0.
     boundary_radius: int = 4
+    hard_pixel_weight: float = 0.
+    hard_pixel_fraction: float = .1
+    hard_pixel_radius: int = 2
 
     def __post_init__(self):
-        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight', 'boundary_weight'):
+        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight', 'boundary_weight', 'hard_pixel_weight'):
             _nonnegative(getattr(self, name), f'loss.{name}')
+        if not 0 < self.hard_pixel_fraction <= 1:
+            raise ValueError('loss.hard_pixel_fraction must be in (0, 1]')
+        if type(self.hard_pixel_radius) is not int or self.hard_pixel_radius < 0:
+            raise ValueError('loss.hard_pixel_radius must be a nonnegative integer')
         if type(self.edge_band) is not int or self.edge_band < 1 or not self.edge_band % 2:
             raise ValueError('loss.edge_band must be a positive odd integer')
         if not math.isfinite(self.edge_max_pos_weight) or self.edge_max_pos_weight < 1:

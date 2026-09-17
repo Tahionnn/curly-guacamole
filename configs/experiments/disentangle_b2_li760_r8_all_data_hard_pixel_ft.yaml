@@ -1,0 +1,20 @@
+# Continue the completed three-epoch all-data finetune from its epoch-3 EMA.
+extends: disentangle_b2_li760_r8_all_data_ft.yaml
+run_name: disentangle_b2_li760_r8_all_data_hard_pixel_ft
+train:
+  finetune_from: disentangle_b2_li760_r8_all_data_ft_ep3/ckpt/last.pt
+  finetune_weights: ema
+  resume: true
+  epochs: 3
+  full_pass_epochs: 3
+  scheduler: none
+  warmup_fraction: 0.0
+  encoder_lr: 0.00001
+  jpeg_lr: 0.00003
+  head_lr: 0.00003
+loss:
+  hard_pixel_weight: 0.1
+  hard_pixel_fraction: 0.1
+  hard_pixel_radius: 2
+augmentation:
+  final_full_frame_epochs: 3

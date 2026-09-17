@@ -228,7 +228,9 @@ def build_scheduler(
     steps_per_epoch: int,
     *,
     full_steps_per_epoch: int | None = None,
-) -> torch.optim.lr_scheduler.LambdaLR:
+) -> torch.optim.lr_scheduler.LambdaLR | None:
+    if config.scheduler == 'none':
+        return None
     steps_per_epoch = max(1, int(steps_per_epoch))
     if config.full_pass_epochs:
         if full_steps_per_epoch is None or full_steps_per_epoch <= 0:

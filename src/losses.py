@@ -79,14 +79,51 @@ class BoundaryBandLoss(torch.nn.Module):
         return bce_loss(logits.float(), target.float(), valid_mask=dilated - eroded)
 
 
+class HardPixelLoss(torch.nn.Module):
+    """Mine BCE per image/class, excluding a band around the GT boundary.
+
+    Each class contributes its own mean, then images are averaged, including
+    zero for missing classes. Mining stays on device; empty classes are safe.
+    """
+
+    def __init__(self, fraction=.1, radius=2):
+        super().__init__()
+        if not 0 < fraction <= 1:
+            raise ValueError('hard_pixel_fraction must be in (0, 1]')
+        if type(radius) is not int or radius < 0:
+            raise ValueError('hard_pixel_radius must be a nonnegative integer')
+        self.fraction = fraction
+        self.radius = radius
+
+    def _mine(self, losses, eligible):
+        counts = eligible.sum(1)
+        selected = (counts * self.fraction).ceil().long()
+        # The per-class count never exceeds this fixed upper bound.
+        limit = max(1, math.ceil(losses.shape[1] * self.fraction))
+        hardest = losses.masked_fill(~eligible, -torch.inf).topk(limit, dim=1).values
+        keep = torch.arange(limit, device=losses.device)[None] < selected[:, None]
+        total = torch.where(keep, hardest, 0.).sum(1)
+        return (total / selected.clamp_min(1)).mean()
+
+    def forward(self, logits, target):
+        foreground = (target > .5).float()
+        width = 2 * self.radius + 1
+        interior = -F.max_pool2d(-foreground, width, stride=1, padding=self.radius)
+        exterior = 1 - F.max_pool2d(foreground, width, stride=1, padding=self.radius)
+        losses = F.binary_cross_entropy_with_logits(logits.float(), target.float(), reduction='none').flatten(1)
+        return (self._mine(losses, interior.flatten(1).bool()),
+                self._mine(losses, exterior.flatten(1).bool()))
+
+
 class SegmentationLoss(torch.nn.Module):
     """BCE + all-image Dice, classifier BCE and decoder auxiliary supervision."""
 
     def __init__(self, *, dice_weight=1.0, aux_weight=.4, patch_weight=0., edge_weight=0.,
                  edge_band=3, edge_max_pos_weight=50., reference_weight=0.,
-                 boundary_weight=0., boundary_radius=4):
+                 boundary_weight=0., boundary_radius=4, hard_pixel_weight=0.,
+                 hard_pixel_fraction=.1, hard_pixel_radius=2):
         super().__init__()
-        for value in (dice_weight, aux_weight, patch_weight, edge_weight, reference_weight, boundary_weight):
+        for value in (dice_weight, aux_weight, patch_weight, edge_weight, reference_weight, boundary_weight, hard_pixel_weight):
             if not math.isfinite(value) or value < 0:
                 raise ValueError('Loss weights must be finite and nonnegative')
         if type(edge_band) is not int or edge_band < 1 or not edge_band % 2:
@@ -102,6 +139,8 @@ class SegmentationLoss(torch.nn.Module):
         self.reference_weight = reference_weight
         self.boundary_weight = boundary_weight
         self.boundary_loss = BoundaryBandLoss(boundary_radius)
+        self.hard_pixel_weight = hard_pixel_weight
+        self.hard_pixel_loss = HardPixelLoss(hard_pixel_fraction, hard_pixel_radius)
 
     @staticmethod
     def _dice(logits, target):
@@ -124,6 +163,10 @@ class SegmentationLoss(torch.nn.Module):
         }
         if self.boundary_weight > 0:
             components['boundary_bce'] = self.boundary_weight * self.boundary_loss(out['logits'], target)
+        if self.hard_pixel_weight > 0:
+            missed, false_positive = self.hard_pixel_loss(out['logits'], target)
+            components['hard_pixel_positive'] = self.hard_pixel_weight * missed
+            components['hard_pixel_negative'] = self.hard_pixel_weight * false_positive
         if self.aux_weight > 0 and 'aux_logits' in out:
             logits = out['aux_logits'].float()
             components['aux_bce'] = self.aux_weight * bce_loss(logits, target)

@@ -10,13 +10,15 @@ from src.training.engine import ExperimentRunner
 from tests.test_epoch_completion import configure_tiny_run
 
 
-def test_blind_epochs_never_validate_and_resume(tmp_path, monkeypatch):
+@pytest.mark.parametrize('scheduler', ['cosine', 'none'])
+def test_blind_epochs_never_validate_and_resume(tmp_path, monkeypatch, scheduler):
     import src.training.engine as engine
 
     cfg = configure_tiny_run(tmp_path, monkeypatch)
     cfg = replace(cfg, augmentation=replace(cfg.augmentation, final_full_frame_epochs=3),
                   train=replace(cfg.train, train_all_data=True, epochs=3,
-                                    full_pass_epochs=3, resume=True))
+                                    full_pass_epochs=3, resume=True, scheduler=scheduler),
+                  loss=replace(cfg.loss, hard_pixel_weight=.1, hard_pixel_radius=1))
     from types import SimpleNamespace
     monkeypatch.setattr(engine.EvaluationProtocol, 'load', lambda path: SimpleNamespace(
         digest='synthetic-test', provenance=lambda **kw: {'protocol_digest': 'synthetic-test'},
@@ -26,6 +28,9 @@ def test_blind_epochs_never_validate_and_resume(tmp_path, monkeypatch):
     checkpoint = torch.load(run.dir / 'ckpt/last.pt', weights_only=True)
     assert checkpoint['epoch'] == 2 and checkpoint['samples'] == 6
     assert checkpoint['validation_complete'] is True
+    if scheduler == 'none':
+        assert checkpoint['scheduler'] is None
+        assert [g['lr'] for g in checkpoint['optimizer']['param_groups']] == [cfg.train.head_lr] * 2
     assert not (run.dir / 'ckpt/best.pt').exists()
     assert run.summary['evaluation_role'] == 'none'
     assert run.summary['training_complete'] is True

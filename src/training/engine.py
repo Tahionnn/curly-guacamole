@@ -288,7 +288,7 @@ class ExperimentRunner:
             'ema': ema.module.state_dict(),
             'ema_n_averaged': int(ema.n_averaged),
             'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
+            'scheduler': scheduler.state_dict() if scheduler is not None else None,
             'scaler': scaler.state_dict(),
             'epoch': epoch,
             'samples': state.seen_total,
@@ -321,8 +321,14 @@ class ExperimentRunner:
         if (checkpoint.parent.parent / 'holdout_claim.json').exists():
             raise ValueError('Cannot finetune a run after holdout evaluation was claimed')
         saved = torch.load(checkpoint, map_location='cpu', weights_only=True)
-        EvaluationProtocol.load(cfg.dataset.protocol_path).verify_run(saved['cfg'])
         source = ExperimentConfig.from_dict(SnapshotAdapter.normalize(saved['cfg']))
+        if source.train.train_all_data and not cfg.train.train_all_data:
+            raise ValueError('An all-data source requires an all-data finetune without independent validation')
+        protocol = EvaluationProtocol.load(cfg.dataset.protocol_path)
+        if source.train.train_all_data:
+            protocol.verify_run(saved['cfg'], train_all_data=True)
+        else:
+            protocol.verify_run(saved['cfg'])
         if (source.model.encoder != cfg.model.encoder
                 or source.model.jpeg_channels != cfg.model.jpeg_channels
                 or (source.loss.aux_weight > 0) != (cfg.loss.aux_weight > 0)):
@@ -409,7 +415,8 @@ class ExperimentRunner:
         # needs any positive count to continue averaging instead of overwriting it.
         ema.n_averaged.fill_(saved.get("ema_n_averaged", 1))
         optimizer.load_state_dict(saved["optimizer"])
-        scheduler.load_state_dict(saved["scheduler"])
+        if scheduler is not None:
+            scheduler.load_state_dict(saved["scheduler"])
         if saved.get("scaler"):
             scaler.load_state_dict(saved["scaler"])
 
@@ -525,7 +532,7 @@ def train_one_epoch(
     model,
     loader: Iterable[dict[str, torch.Tensor]],
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     scaler,
     ema,
     amp: AmpContext,
@@ -598,7 +605,8 @@ def train_one_epoch(
             profiler.mark()
         if is_accum_boundary or is_last_batch:
             ema.update_parameters(runtime.unwrap(model))
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
         if profiler is not None:
             profiler.mark()
 
