@@ -63,22 +63,31 @@ class AmpContext:
 
 
 def build_model(config: ModelConfig, *, aux_weight: float = .4, pretrained: bool = True) -> Segmenter:
-    from src.modules.segmenter import Segmenter
     from src.modules.sync_batchnorm import SynchronizedBatchNorm
 
-    model = Segmenter(encoder=config.encoder, jpeg_channels=config.jpeg_channels,
-                      aux_weight=aux_weight, pretrained=pretrained,
-                      jpeg_similarity=config.jpeg_similarity,
-                      disentangle_levels=config.disentangle_levels,
-                      disentangle_mode=config.disentangle_mode,
-                      disentangle_reduction=config.disentangle_reduction,
-                      disentangle_cross_strides=config.disentangle_cross_strides,
-                      disentangle_attention_width=config.disentangle_attention_width,
-                      disentangle_attention_heads=config.disentangle_attention_heads,
-                      disentangle_return_to_stride4=config.disentangle_return_to_stride4,
-                      disentangle_parallel_16_32=config.disentangle_parallel_16_32,
-                      bifpn_width=config.bifpn_width, bifpn_repeats=config.bifpn_repeats,
-                      pristine_reference=config.pristine_reference)
+    if config.architecture == 'pvt_dgforce':
+        from src.modules.pvt_dgforce_segmenter import PVTDGForceSegmenter
+        model = PVTDGForceSegmenter(
+            encoder=config.encoder, jpeg_channels=config.jpeg_channels,
+            aux_weight=aux_weight, pretrained=pretrained,
+            reduction=config.dgforce_reduction,
+            attention_width=config.dgforce_attention_width,
+            attention_heads=config.dgforce_attention_heads)
+    else:
+        from src.modules.segmenter import Segmenter
+        model = Segmenter(encoder=config.encoder, jpeg_channels=config.jpeg_channels,
+                          aux_weight=aux_weight, pretrained=pretrained,
+                          jpeg_similarity=config.jpeg_similarity,
+                          disentangle_levels=config.disentangle_levels,
+                          disentangle_mode=config.disentangle_mode,
+                          disentangle_reduction=config.disentangle_reduction,
+                          disentangle_cross_strides=config.disentangle_cross_strides,
+                          disentangle_attention_width=config.disentangle_attention_width,
+                          disentangle_attention_heads=config.disentangle_attention_heads,
+                          disentangle_return_to_stride4=config.disentangle_return_to_stride4,
+                          disentangle_parallel_16_32=config.disentangle_parallel_16_32,
+                          bifpn_width=config.bifpn_width, bifpn_repeats=config.bifpn_repeats,
+                          pristine_reference=config.pristine_reference)
     model.forensic_fusion.branch.artifact.dc_layer0_dil[0].specialize_width = config.jpeg_specialize_width
     model.forensic_fusion.branch.artifact.dc_layer0_dil[0].triton_backward = config.jpeg_triton_backward
     model.forensic_fusion.branch.artifact.dc_layer1_tail[0].use_matmul = config.jpeg_pointwise_matmul

@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from src.data.geometry import restore_probability
-from src.losses import LossMeter, SegmentationLoss
+from src.losses import LossMeter, build_loss
 from src.progress import ConsoleProgress
 from src.training.distributed import TrainingRuntime
 from src.training.metric import AICAccumulator, AICResult, threshold_bin
@@ -111,7 +111,7 @@ def _collect_validation(model, loader, amp, config, device, *, progress=True):
     acc = AICAccumulator(n_bins=n_bins, small_mask_weight=config.eval.selection_small_mask_weight)
     histograms = DeviceHistogramAccumulator(acc, device)
     meter = LossMeter()
-    criterion = SegmentationLoss(**config.loss.to_dict()).eval()
+    criterion = build_loss(config.loss).eval()
 
     batches = ConsoleProgress.iterate(loader, 'Валидация, батчи') if progress else loader
     for batch in batches:

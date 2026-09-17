@@ -3,7 +3,19 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.config import ExperimentConfig, load_experiment_config
+from src.config import ExperimentConfig, ModelConfig, load_experiment_config
+
+
+def test_model_config_validates_pvt_dgforce_settings():
+    config = ModelConfig(architecture='pvt_dgforce', dgforce_reduction=8,
+                         dgforce_attention_width=64, dgforce_attention_heads=4)
+    assert config.architecture == 'pvt_dgforce'
+    with pytest.raises(ValueError, match='architecture'):
+        ModelConfig(architecture='unknown')
+    with pytest.raises(ValueError, match='only.*pvt_v2_b2'):
+        ModelConfig(architecture='pvt_dgforce', encoder='resnet18')
+    with pytest.raises(ValueError, match='divide'):
+        ModelConfig(dgforce_attention_width=63, dgforce_attention_heads=4)
 
 
 def test_inheritance_merges_nested_sections_and_replaces_lists(tmp_path, monkeypatch):

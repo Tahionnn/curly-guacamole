@@ -15,7 +15,7 @@ from src.config import ExperimentConfig, SnapshotAdapter
 from src.data.data_workspace import DataWorkspace
 from src.eval.diagnostics import EvaluationReport
 from src.eval.protocol import EvaluationProtocol
-from src.losses import LossMeter, SegmentationLoss
+from src.losses import LossMeter, build_loss
 from src.progress import ConsoleProgress
 from src.training.base import set_random_seed
 from src.training.builders import (
@@ -549,7 +549,7 @@ def train_one_epoch(
     model.train()
     skipped_steps = 0
     meter = LossMeter()
-    criterion = SegmentationLoss(**config.loss.to_dict())
+    criterion = build_loss(config.loss)
     seen = 0
     accumulation_samples = 0
     negatives = torch.zeros((), device=device)

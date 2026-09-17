@@ -118,14 +118,18 @@ class HardPixelLoss(torch.nn.Module):
 class SegmentationLoss(torch.nn.Module):
     """BCE + all-image Dice, classifier BCE and decoder auxiliary supervision."""
 
-    def __init__(self, *, dice_weight=1.0, aux_weight=.4, patch_weight=0., edge_weight=0.,
+    def __init__(self, *, mode='standard', mask_weight=1.0, dice_weight=1.0,
+                 aux_weight=.4, patch_weight=0., edge_weight=0.,
                  edge_band=3, edge_max_pos_weight=50., reference_weight=0.,
                  boundary_weight=0., boundary_radius=4, hard_pixel_weight=0.,
                  hard_pixel_fraction=.1, hard_pixel_radius=2):
         super().__init__()
-        for value in (dice_weight, aux_weight, patch_weight, edge_weight, reference_weight, boundary_weight, hard_pixel_weight):
+        if mode != 'standard':
+            raise ValueError("SegmentationLoss supports only mode='standard'")
+        for value in (mask_weight, dice_weight, aux_weight, patch_weight, edge_weight, reference_weight, boundary_weight, hard_pixel_weight):
             if not math.isfinite(value) or value < 0:
                 raise ValueError('Loss weights must be finite and nonnegative')
+        self.mask_weight = mask_weight
         if type(edge_band) is not int or edge_band < 1 or not edge_band % 2:
             raise ValueError('edge_band must be a positive odd integer')
         if not math.isfinite(edge_max_pos_weight) or edge_max_pos_weight < 1:
@@ -157,7 +161,7 @@ class SegmentationLoss(torch.nn.Module):
         if labels is None:
             labels = positive.float().reshape_as(out['cls_logits'])
         components = {
-            'bce': bce_loss(out['logits'].float(), target),
+            'bce': self.mask_weight * bce_loss(out['logits'].float(), target),
             'dice': self.dice_weight * dice,
             'cls': .3 * bce_loss(out['cls_logits'].float(), labels.float()),
         }
@@ -197,6 +201,60 @@ class SegmentationLoss(torch.nn.Module):
         diagnostics = {'dice_pos': ((per_image * positive).sum(), positive.sum()),
                        'dice_neg': ((per_image * ~positive).sum(), (~positive).sum())}
         return LossResult(sum(components.values()), components, diagnostics)
+
+
+class DGForceLoss(torch.nn.Module):
+    """The three BCE objectives from DG-Force, averaged over supervised layers."""
+
+    def __init__(self, *, mask_weight=2.0, patch_weight=1.0, edge_weight=1.0,
+                 edge_band=3):
+        super().__init__()
+        for name, value in (('mask_weight', mask_weight), ('patch_weight', patch_weight),
+                            ('edge_weight', edge_weight)):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f'{name} must be finite and nonnegative')
+        if type(edge_band) is not int or edge_band < 1 or not edge_band % 2:
+            raise ValueError('edge_band must be a positive odd integer')
+        self.mask_weight = mask_weight
+        self.patch_weight = patch_weight
+        self.edge_weight = edge_weight
+        self.edge_band = edge_band
+
+    def forward(self, out, batch):
+        target = batch['mask'].float()
+        mask = self.mask_weight * bce_loss(out['logits'].float(), target)
+        if not self.training:
+            return LossResult(mask, {'mask_bce': mask}, {})
+        if not out.get('patch_logits') or not out.get('edge_logits'):
+            raise ValueError('DGForceLoss requires patch_logits and edge_logits')
+        patch_terms = [
+            bce_loss(logits.float(), coarse_target(target, logits.shape[-2:]))
+            for logits in out['patch_logits'].values()
+        ]
+        edge_terms = [
+            bce_loss(logits.float(), edge_band_target(
+                coarse_target(target, logits.shape[-2:]), self.edge_band))
+            for logits in out['edge_logits'].values()
+        ]
+        components = {
+            'mask_bce': mask,
+            'patch_bce': self.patch_weight * torch.stack(patch_terms).mean(),
+            'edge_bce': self.edge_weight * torch.stack(edge_terms).mean(),
+        }
+        return LossResult(sum(components.values()), components, {})
+
+
+def build_loss(config):
+    """Construct the objective selected by a LossConfig-like value."""
+    values = config.to_dict() if hasattr(config, 'to_dict') else dict(config)
+    mode = values.pop('mode', 'standard')
+    mask_weight = values.pop('mask_weight', 1.0)
+    if mode == 'dgforce':
+        return DGForceLoss(mask_weight=mask_weight,
+                           patch_weight=values['patch_weight'],
+                           edge_weight=values['edge_weight'],
+                           edge_band=values['edge_band'])
+    return SegmentationLoss(**values)
 
 
 class LossMeter:

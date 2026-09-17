@@ -59,6 +59,7 @@ class PathsConfig(ConfigSection):
 
 @dataclass(frozen=True)
 class ModelConfig(ConfigSection):
+    architecture: str = 'segmenter'
     encoder: str = 'pvt_v2_b2'
     jpeg_channels: tuple[int, ...] = (64, 96, 128)
     jpeg_pretrained: str | None = 'DCT_djpeg.pth'
@@ -77,9 +78,21 @@ class ModelConfig(ConfigSection):
     bifpn_width: int = 64
     bifpn_repeats: int = 0
     pristine_reference: bool = False
+    dgforce_reduction: int = 16
+    dgforce_attention_width: int = 128
+    dgforce_attention_heads: int = 4
 
     def __post_init__(self):
+        if self.architecture not in {'segmenter', 'pvt_dgforce'}:
+            raise ValueError("model.architecture must be 'segmenter' or 'pvt_dgforce'")
         _non_empty_str(self.encoder, 'model.encoder')
+        if self.architecture == 'pvt_dgforce' and self.encoder != 'pvt_v2_b2':
+            raise ValueError("model.architecture=pvt_dgforce supports only encoder='pvt_v2_b2'")
+        for key in ('dgforce_reduction', 'dgforce_attention_width', 'dgforce_attention_heads'):
+            if type(getattr(self, key)) is not int or getattr(self, key) < 1:
+                raise ValueError(f'model.{key} must be a positive integer')
+        if self.dgforce_attention_width % self.dgforce_attention_heads:
+            raise ValueError('model.dgforce_attention_width must divide by the head count')
         if type(self.jpeg_triton_backward) is not bool:
             raise ValueError('model.jpeg_triton_backward must be a boolean')
         if type(self.pristine_reference) is not bool:
@@ -256,6 +269,8 @@ class EvalConfig(ConfigSection):
 
 @dataclass(frozen=True)
 class LossConfig(ConfigSection):
+    mode: str = 'standard'
+    mask_weight: float = 1.0
     dice_weight: float = 1.0
     aux_weight: float = .4
     patch_weight: float = 0.
@@ -270,7 +285,9 @@ class LossConfig(ConfigSection):
     hard_pixel_radius: int = 2
 
     def __post_init__(self):
-        for name in ('dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight', 'boundary_weight', 'hard_pixel_weight'):
+        if self.mode not in {'standard', 'dgforce'}:
+            raise ValueError("loss.mode must be 'standard' or 'dgforce'")
+        for name in ('mask_weight', 'dice_weight', 'aux_weight', 'patch_weight', 'edge_weight', 'reference_weight', 'boundary_weight', 'hard_pixel_weight'):
             _nonnegative(getattr(self, name), f'loss.{name}')
         if not 0 < self.hard_pixel_fraction <= 1:
             raise ValueError('loss.hard_pixel_fraction must be in (0, 1]')
@@ -323,8 +340,11 @@ class ExperimentConfig:
             raise ValueError('augmentation.final_full_frame_epochs must not exceed train.epochs')
         if self.train.full_pass_epochs > self.augmentation.final_full_frame_epochs:
             raise ValueError('train.full_pass_epochs requires matching final_full_frame_epochs')
-        if (self.loss.patch_weight or self.loss.edge_weight) and not self.model.disentangle_levels:
+        if (self.loss.patch_weight or self.loss.edge_weight) and not (
+                self.model.disentangle_levels or self.loss.mode == 'dgforce'):
             raise ValueError('patch/edge supervision requires model.disentangle_levels')
+        if self.loss.mode == 'dgforce' and self.model.architecture != 'pvt_dgforce':
+            raise ValueError('loss.mode=dgforce requires model.architecture=pvt_dgforce')
         if self.loss.reference_weight and not self.model.pristine_reference:
             raise ValueError('reference supervision requires model.pristine_reference')
 

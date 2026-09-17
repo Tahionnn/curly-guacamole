@@ -1,0 +1,16 @@
+# PVT-v2-B2 with DG-Force DFDG in all 3/4/6 blocks of stages 1-3.
+extends: ../baseline.yaml
+run_name: pvt_dgforce
+model:
+  architecture: pvt_dgforce
+  dgforce_reduction: 16
+  dgforce_attention_width: 128
+  dgforce_attention_heads: 4
+loss:
+  mode: dgforce
+  mask_weight: 2.0
+  patch_weight: 1.0
+  edge_weight: 1.0
+  edge_band: 3
+  dice_weight: 0.0
+  aux_weight: 0.0

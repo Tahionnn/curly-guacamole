@@ -49,6 +49,37 @@ def test_build_model_uses_model_config(monkeypatch, pretrained):
     assert model.decoder.out_channels == FakeFeatureInfo.channels()[0]
 
 
+def test_build_model_selects_independent_pvt_dgforce_model(monkeypatch):
+    from src.config import ModelConfig
+    from src.training import builders
+
+    captured = {}
+
+    class FakeDGForce:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.forensic_fusion = type('Fusion', (), {'branch': type('Branch', (), {
+                'artifact': type('Artifact', (), {
+                    'dc_layer0_dil': [type('Layer', (), {})()],
+                    'dc_layer1_tail': [type('Layer', (), {})()],
+                })()
+            })()})()
+
+    monkeypatch.setattr('src.modules.pvt_dgforce_segmenter.PVTDGForceSegmenter', FakeDGForce)
+    monkeypatch.setattr('src.modules.sync_batchnorm.SynchronizedBatchNorm.apply', lambda model: model)
+    config = ModelConfig(architecture='pvt_dgforce', jpeg_pretrained=None,
+                         dgforce_reduction=8, dgforce_attention_width=64,
+                         dgforce_attention_heads=4)
+
+    model = builders.build_model(config, aux_weight=0.0, pretrained=False)
+
+    assert isinstance(model, FakeDGForce)
+    assert captured['encoder'] == 'pvt_v2_b2'
+    assert captured['reduction'] == 8
+    assert captured['attention_width'] == 64
+    assert captured['attention_heads'] == 4
+
+
 def test_build_loaders_uses_train_config():
     from src.training.builders import build_datasets, build_loaders
 
